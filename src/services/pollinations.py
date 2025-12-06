@@ -196,9 +196,9 @@ class PollinationsClient:
         # Build messages
         messages = [{"role": "system", "content": system_content}]
 
-        # Add thread history
+        # Add thread history (use all 50 messages for full context)
         if thread_history:
-            for msg in thread_history[-10:]:
+            for msg in thread_history:
                 messages.append(msg)
 
         # Build current user message
@@ -283,7 +283,8 @@ class PollinationsClient:
                 }
 
             # Execute tool calls in parallel
-            tool_names = [tc["function"]["name"] for tc in tool_calls]
+            # Strip namespace prefix for cleaner logging (e.g., "default_api:github_code" -> "github_code")
+            tool_names = [tc["function"]["name"].split(":")[-1] for tc in tool_calls]
             logger.info(f"Executing {len(tool_calls)} tool(s): {', '.join(tool_names)}")
             all_tool_calls.extend(tool_calls)
 

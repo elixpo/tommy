@@ -657,9 +657,9 @@ async def process_message(
         tool_calls = result.get("tool_calls", [])
         tool_results = result.get("tool_results", [])
 
-        # Log tool usage for debugging
+        # Log tool usage for debugging (strip namespace prefix for cleaner logs)
         if tool_calls:
-            tool_names = [tc["function"]["name"] for tc in tool_calls]
+            tool_names = [tc["function"]["name"].split(":")[-1] for tc in tool_calls]
             logger.info(f"Tools called: {', '.join(tool_names)}")
 
         # Check if issue was created or comment added
