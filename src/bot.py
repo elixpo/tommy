@@ -37,9 +37,14 @@ THREAD_HISTORY_LIMIT = 50
 def is_admin(user: discord.User | discord.Member) -> bool:
     """Check if a user has any of the configured admin roles."""
     if not config.admin_role_ids:
+        logger.debug(f"No admin_role_ids configured, user {user} is not admin")
         return False
     if isinstance(user, discord.Member):
-        return any(role.id in config.admin_role_ids for role in user.roles)
+        user_role_ids = [r.id for r in user.roles]
+        is_admin_user = any(role_id in config.admin_role_ids for role_id in user_role_ids)
+        logger.debug(f"Admin check for {user}: roles={user_role_ids}, admin_role_ids={config.admin_role_ids}, is_admin={is_admin_user}")
+        return is_admin_user
+    logger.debug(f"User {user} is not a Member (type={type(user).__name__}), not admin")
     return False
 
 
