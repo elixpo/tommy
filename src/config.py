@@ -123,6 +123,11 @@ class Config:
         return key_value.replace("\\n", "\n")
 
     @property
+    def github_repo(self) -> str:
+        """Alias for default_repo (backward compatibility)."""
+        return self.default_repo
+
+    @property
     def use_github_app(self) -> bool:
         """Check if GitHub App credentials are configured."""
         return bool(
