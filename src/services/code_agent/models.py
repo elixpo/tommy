@@ -346,15 +346,13 @@ class ModelRouter:
             payload["parallel_tool_calls"] = True
 
         # Thinking/reasoning for thinking models (like Kimi K2)
-        if model_config.thinking_enabled:
+        # Only send thinking params when enabled - API rejects budget_tokens: 0
+        if model_config.thinking_enabled and model_config.thinking_budget > 0:
             payload["thinking"] = {
                 "type": "enabled",
                 "budget_tokens": model_config.thinking_budget,
             }
             payload["reasoning_effort"] = model_config.reasoning_effort
-            payload["thinking_budget"] = model_config.thinking_budget
-        else:
-            payload["thinking"] = {"type": "disabled", "budget_tokens": 0}
 
         return payload
 
