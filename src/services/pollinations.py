@@ -357,6 +357,7 @@ class PollinationsClient:
 
             # Get handler
             handler = self._tool_handlers.get(func_name)
+            logger.info(f"Tool {func_name}: handler={handler.__name__ if handler else None}, action={action}")
             if not handler:
                 logger.warning(f"No handler for tool: {func_name}")
                 return {"error": f"Unknown tool: {func_name}"}

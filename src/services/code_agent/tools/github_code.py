@@ -114,10 +114,13 @@ async def tool_github_code(
     Returns:
         Result dict with status and details
     """
+    logger.info(f"github_code called: action={action}, _is_admin={_is_admin}, repo={repo}")
+
     # SECURITY: Admin check - code agent can modify repos
     # The _is_admin flag MUST be explicitly set True by the bot.py wrapper
     # Default is False, so direct calls without the wrapper are blocked
     if not _is_admin:
+        logger.warning(f"github_code blocked: _is_admin=False for action={action}")
         return {
             "error": "Code agent requires admin permissions. This tool can modify repository code, create branches, and open PRs - ask a team member with admin access!"
         }
