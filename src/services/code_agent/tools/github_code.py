@@ -28,6 +28,7 @@ from datetime import datetime
 import discord
 
 from ..agent import CodeAgent, code_agent, AgentResult, AgentPhase
+from ..autonomous import AutonomousAgent, autonomous_agent, AutonomousResult
 from ..sandbox import sandbox_manager, Sandbox  # Only needed for task/plan actions
 from ..discord_progress import (
     DiscordProgressReporter,
@@ -135,6 +136,17 @@ async def tool_github_code(
             return await _handle_plan(task, repo, branch)
 
         if action == "task":
+            # Use autonomous agent by default - AI decides the workflow
+            return await _handle_autonomous_task(
+                task=task,
+                repo=repo,
+                branch=branch,
+                channel=discord_channel,
+                user_name=discord_user_name,
+            )
+
+        # Legacy fixed-flow task (kept for backwards compatibility)
+        if action == "task_legacy":
             if interactive and discord_channel and discord_bot:
                 return await _handle_interactive_task(
                     task=task,
@@ -195,7 +207,7 @@ async def tool_github_code(
         if action == "open_pr":
             return await _handle_open_pr(repo, branch, base_branch, pr_title, pr_body)
 
-        return {"error": f"Unknown action: {action}. Available: task, plan, status, run_in_sandbox, read_sandbox_file, write_sandbox_file, destroy_sandbox, list_branches, create_branch, delete_branch, read_file, list_files, edit_file, commit, push, open_pr"}
+        return {"error": f"Unknown action: {action}. Available: task (autonomous), task_legacy, plan, status, run_in_sandbox, read_sandbox_file, write_sandbox_file, destroy_sandbox, list_branches, create_branch, delete_branch, read_file, list_files, edit_file, commit, push, open_pr"}
 
     except Exception as e:
         logger.exception("Error in github_code tool")
@@ -394,6 +406,85 @@ async def _handle_plan(task: str, repo: str, branch: str) -> dict:
 
     finally:
         await agent.close()
+
+
+async def _handle_autonomous_task(
+    task: str,
+    repo: str,
+    branch: str,
+    channel: Optional[discord.TextChannel] = None,
+    user_name: Optional[str] = None,
+) -> dict:
+    """
+    Handle task using the autonomous agent.
+
+    The AI decides what to do - no predefined flow.
+    It can read files, write code, run tests, search, etc. in any order it wants.
+    """
+    if not task:
+        return {"error": "Task description is required"}
+
+    import uuid
+    task_id = str(uuid.uuid4())[:8]
+
+    # Track the task
+    _running_tasks[task_id] = {
+        "task": task,
+        "repo": repo,
+        "branch": branch,
+        "phase": "autonomous",
+        "started_at": datetime.utcnow(),
+        "messages": [],
+    }
+
+    try:
+        # Progress callback - track internally
+        async def on_progress(phase: str, message: str, detail: Optional[str] = None):
+            _running_tasks[task_id]["phase"] = phase
+            _running_tasks[task_id]["messages"].append(f"[{phase}] {message}")
+            logger.info(f"Autonomous agent: [{phase}] {message}")
+
+        # Run the autonomous agent
+        result = await autonomous_agent.run(
+            task=task,
+            repo=repo,
+            branch=branch,
+            model="claude-large",  # Best for coding
+            on_progress=on_progress,
+            initiated_by=user_name,
+            initiated_source="discord" if channel else None,
+        )
+
+        # Update tracking
+        _running_tasks[task_id]["phase"] = "complete" if result.success else "failed"
+        _running_tasks[task_id]["messages"] = [result.summary] if result.summary else []
+
+        # Format response for AI to present to user
+        return {
+            "success": result.success,
+            "task_id": task_id,
+            "sandbox_id": result.sandbox_id,
+            "task": task,
+            "repo": repo,
+            "branch": branch,
+            "summary": result.summary,
+            "files_changed": result.files_changed,
+            "commit_sha": result.commit_sha,
+            "tool_calls": result.tool_calls,
+            "duration": result.duration,
+            "error": result.error,
+            # Hint for AI
+            "_ai_hint": "Sandbox is still running. Ask user: want to create a branch/PR, make more changes, or destroy the sandbox?"
+        }
+
+    except Exception as e:
+        _running_tasks[task_id]["phase"] = "failed"
+        _running_tasks[task_id]["messages"].append(f"Error: {e}")
+        logger.exception("Autonomous task failed")
+        return {"error": str(e), "task_id": task_id}
+
+    finally:
+        asyncio.create_task(_cleanup_task(task_id, delay=300))
 
 
 async def _handle_task(

@@ -2,10 +2,14 @@
 Docker sandbox manager for safe code execution.
 
 Provides isolated environments for:
-- Cloning repositories
-- Running tests
+- Running code in containers
 - Executing commands
 - File operations
+
+Optimization: Uses local repo copy instead of git clone for speed.
+- Copies from data/repo/ instead of cloning from GitHub
+- Shares embeddings from data/embeddings/ (read-only)
+- AI can start working immediately
 
 Each sandbox is a Docker container with the repo mounted.
 """
@@ -24,15 +28,22 @@ from .session_embeddings import session_embeddings_manager
 
 logger = logging.getLogger(__name__)
 
+# Data directories (shared with embeddings service)
+DATA_DIR = Path(__file__).parent.parent.parent.parent / "data"
+LOCAL_REPO_DIR = DATA_DIR / "repo"
+EMBEDDINGS_DIR = DATA_DIR / "embeddings"
+
 
 @dataclass
 class SandboxConfig:
     """Configuration for a sandbox."""
-    image: str = "python:3.11-slim"
-    memory_limit: str = "2g"
-    cpu_limit: float = 2.0
+    # Use full python image with all common tools (not slim)
+    # This includes: git, grep, find, sed, awk, curl, etc.
+    image: str = "python:3.11"
+    memory_limit: str = "4g"  # More memory for complex tasks
+    cpu_limit: float = 4.0    # More CPU
     timeout: int = 300  # 5 minutes default
-    network_enabled: bool = True  # For pip install etc
+    network_enabled: bool = True  # For pip install, npm install, etc.
 
 
 @dataclass
@@ -122,16 +133,18 @@ class SandboxManager:
         config: Optional[SandboxConfig] = None,
         initiated_by: Optional[str] = None,
         initiated_source: Optional[str] = None,
+        use_local_repo: bool = True,  # Prefer local copy over git clone
     ) -> Sandbox:
         """
         Create a new sandbox.
 
         Args:
-            repo_url: Git repository URL to clone (optional)
+            repo_url: Git repository URL (used for fallback clone if local not available)
             branch: Branch to checkout
             config: Sandbox configuration
             initiated_by: Username of who started this sandbox
             initiated_source: Source platform ("discord" or "github")
+            use_local_repo: If True, copy from data/repo/ instead of cloning (faster)
 
         Returns:
             Sandbox instance
@@ -155,16 +168,23 @@ class SandboxManager:
         else:
             await self._create_local_sandbox(sandbox)
 
-        # Add to sandboxes BEFORE clone so execute() can find it
+        # Add to sandboxes BEFORE setup so execute() can find it
         self.sandboxes[sandbox_id] = sandbox
 
-        # Clone repo if provided
-        if repo_url:
+        # Install common tools in Docker sandbox
+        if self.use_docker:
+            await self._setup_sandbox_tools(sandbox)
+
+        # Setup repo: prefer local copy, fallback to git clone
+        if use_local_repo and LOCAL_REPO_DIR.exists():
+            await self._copy_local_repo(sandbox, branch)
+        elif repo_url:
             await self._clone_repo(sandbox, repo_url, branch)
 
         # Create session embeddings for this sandbox
+        # Link to global embeddings for combined search
         await session_embeddings_manager.create_session(sandbox_id)
-        logger.info(f"Created sandbox {sandbox_id} for {repo_url or 'empty'} (by {initiated_by})")
+        logger.info(f"Created sandbox {sandbox_id} (local_repo={use_local_repo}, by={initiated_by})")
 
         return sandbox
 
@@ -196,6 +216,74 @@ class SandboxManager:
         """Create local sandbox (no Docker)."""
         # Just use the workspace directory
         pass
+
+    async def _setup_sandbox_tools(self, sandbox: Sandbox):
+        """Install common development tools in the sandbox."""
+        # The python:3.11 image should have most tools, but let's ensure some extras
+        # This runs once on container creation
+        setup_cmd = """
+apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+    ripgrep fd-find jq tree procps \
+    nodejs npm \
+    2>/dev/null || true
+"""
+        result = await self._execute_docker(sandbox, setup_cmd, timeout=120, env=None)
+        if result.exit_code != 0:
+            logger.warning(f"Sandbox tool setup had issues: {result.stderr[:200]}")
+        else:
+            logger.info(f"Sandbox {sandbox.id} tools setup complete")
+
+    async def _copy_local_repo(self, sandbox: Sandbox, branch: str):
+        """
+        Copy local repo to sandbox instead of cloning.
+
+        Much faster than git clone - instant start for AI.
+        Uses rsync if available for speed, falls back to shutil.
+        """
+        logger.info(f"Copying local repo to sandbox {sandbox.id}...")
+        start_time = asyncio.get_event_loop().time()
+
+        try:
+            # Use rsync for speed (excludes .git internals we don't need)
+            # Copy to workspace directory
+            rsync_cmd = [
+                "rsync", "-a", "--delete",
+                "--exclude", ".git/objects",
+                "--exclude", ".git/logs",
+                "--exclude", "node_modules",
+                "--exclude", "__pycache__",
+                "--exclude", ".venv",
+                "--exclude", "*.pyc",
+                f"{LOCAL_REPO_DIR}/",
+                f"{sandbox.workspace_path}/"
+            ]
+
+            result = await self._run_host_command(rsync_cmd, timeout=60)
+
+            if result.exit_code != 0:
+                # Fallback to shutil copy
+                logger.warning(f"rsync failed, using shutil: {result.stderr[:100]}")
+                await asyncio.to_thread(
+                    shutil.copytree,
+                    LOCAL_REPO_DIR,
+                    sandbox.workspace_path,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(
+                        ".git/objects", ".git/logs", "node_modules",
+                        "__pycache__", ".venv", "*.pyc"
+                    )
+                )
+
+            duration = asyncio.get_event_loop().time() - start_time
+            logger.info(f"Local repo copied to sandbox {sandbox.id} in {duration:.1f}s")
+
+            # Create branch if different from current
+            if branch != "main":
+                await self.execute(sandbox.id, f"git checkout -b {branch} 2>/dev/null || git checkout {branch}")
+
+        except Exception as e:
+            logger.error(f"Failed to copy local repo: {e}")
+            raise RuntimeError(f"Failed to copy local repo: {e}")
 
     async def _clone_repo(self, sandbox: Sandbox, repo_url: str, branch: str):
         """Clone repository into sandbox."""
