@@ -113,7 +113,7 @@ class ClaudeCodeConfig:
     """Configuration for Claude Code agent."""
     # ccr config
     api_base_url: str = "https://gen.pollinations.ai/v1/chat/completions"
-    api_key: str = ""  # Pollinations doesn't require key, but ccr needs it
+    api_key: str = ""  # Pollinations API key for ccr
     default_model: str = "claude-large"
     background_model: str = "gemini"
     web_search_model: str = "perplexity-fast"
@@ -276,7 +276,7 @@ chmod 666 /tmp/claude-code-reference-count.txt
                 {
                     "name": "main",
                     "api_base_url": self.config.api_base_url,
-                    "api_key": self.config.api_key or "dummy",
+                    "api_key": self.config.api_key,
                     "models": [
                         "openai-large",
                         "gemini-large",
@@ -576,5 +576,15 @@ def get_claude_code_agent() -> ClaudeCodeAgent:
     """Get or create the global Claude Code agent instance."""
     global claude_code_agent
     if claude_code_agent is None:
-        claude_code_agent = ClaudeCodeAgent()
+        # Load API key from config
+        from ...config import config as app_config
+        api_key = app_config.pollinations_token
+        if not api_key:
+            logger.warning("POLLINATIONS_TOKEN not set - ccr may fail API calls")
+        else:
+            logger.info(f"Loaded Pollinations API key: {api_key[:10]}...")
+        ccr_config = ClaudeCodeConfig(
+            api_key=api_key,
+        )
+        claude_code_agent = ClaudeCodeAgent(config=ccr_config)
     return claude_code_agent
