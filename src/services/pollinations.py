@@ -272,7 +272,8 @@ class PollinationsClient:
                 }
 
             # Execute tool calls in parallel
-            tool_names = [tc["function"]["name"] for tc in tool_calls]
+            # Strip API prefix from tool names for cleaner logging
+            tool_names = [tc["function"]["name"].split(":")[-1] if ":" in tc["function"]["name"] else tc["function"]["name"] for tc in tool_calls]
             logger.info(f"Executing {len(tool_calls)} tool(s): {', '.join(tool_names)}")
             all_tool_calls.extend(tool_calls)
 
@@ -295,10 +296,14 @@ class PollinationsClient:
 
             # Add tool results
             for tool_call, result in zip(tool_calls, tool_results):
+                # Strip API prefix from tool name for consistency
+                tool_name = tool_call["function"]["name"]
+                if ":" in tool_name:
+                    tool_name = tool_name.split(":")[-1]
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.get("id", ""),
-                    "name": tool_call["function"]["name"],
+                    "name": tool_name,
                     "content": json.dumps(result, ensure_ascii=False)
                 })
 
@@ -359,7 +364,13 @@ class PollinationsClient:
                 args["_context"] = tool_context
 
             try:
+                logger.info(f"Calling tool {func_name} with action={args.get('action', 'N/A')}")
                 result = await handler(**args)
+                # Log result summary
+                if result.get("error"):
+                    logger.warning(f"Tool {func_name} returned error: {result.get('error')[:200]}")
+                else:
+                    logger.info(f"Tool {func_name} succeeded")
                 # Cache successful read-only results
                 if cache_key and not result.get("error"):
                     self._cache.set(cache_key, result)
@@ -426,6 +437,10 @@ class PollinationsClient:
                     if response.status == 200:
                         data = await response.json()
                         message = data["choices"][0]["message"]
+                        # Log raw tool calls from API to debug prefix issue
+                        if message.get("tool_calls"):
+                            raw_names = [tc["function"]["name"] for tc in message["tool_calls"]]
+                            logger.info(f"API returned tool calls (raw): {raw_names}")
                         return {
                             "content": message.get("content", ""),
                             "tool_calls": message.get("tool_calls", [])
@@ -658,7 +673,7 @@ pollinations_client = PollinationsClient()
 
 # Perplexity models available via Pollinations
 PERPLEXITY_MODELS = {
-    "fast": "perplexity",  # Fast, simple lookups
+    "fast": "perplexity-fast",  # Fast, simple lookups
     "reasoning": "perplexity-reasoning",  # Complex analysis
 }
 

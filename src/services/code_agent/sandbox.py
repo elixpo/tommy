@@ -210,7 +210,7 @@ class SandboxManager:
         """
         Setup repository in sandbox.
 
-        First tries to copy from local cache (fast), falls back to git clone.
+        First tries to copy from local cache on HOST (fast), falls back to git clone.
         Local cache is at /root/Polly/data/repo/{owner}_{repo}/
         """
         # Try to use local repo cache first (much faster than cloning 600MB+)
@@ -220,18 +220,27 @@ class SandboxManager:
             parts = repo_url.rstrip("/").rstrip(".git").split("/")
             if len(parts) >= 2:
                 owner, repo_name = parts[-2], parts[-1]
-                local_cache = f"/root/Polly/data/repo/{owner}_{repo_name}"
+                local_cache = Path(f"/root/Polly/data/repo/{owner}_{repo_name}")
 
-                # Check if local cache exists and copy it
-                check_cmd = f"test -d {local_cache} && cp -r {local_cache}/. /workspace/"
-                result = await self.execute(sandbox.id, check_cmd, timeout=60)
+                # Check if local cache exists on HOST and use docker cp to copy to container
+                if local_cache.exists() and local_cache.is_dir():
+                    logger.info(f"Found local cache at {local_cache}, copying to sandbox {sandbox.id}")
 
-                if result.exit_code == 0:
-                    # Setup git and checkout branch
-                    setup_cmd = f"cd /workspace && git checkout {branch} 2>/dev/null || git checkout -b {branch}"
-                    await self.execute(sandbox.id, setup_cmd, timeout=30)
-                    logger.info(f"Copied {owner}/{repo_name} from local cache to sandbox {sandbox.id}")
-                    return
+                    # Use docker cp to copy from HOST to container (not execute inside container)
+                    copy_result = await self._run_host_command([
+                        "docker", "cp",
+                        f"{local_cache}/.",
+                        f"polli_sandbox_{sandbox.id}:/workspace/"
+                    ], timeout=120)
+
+                    if copy_result.exit_code == 0:
+                        # Setup git and checkout branch inside container
+                        setup_cmd = f"cd /workspace && git checkout {branch} 2>/dev/null || git checkout -b {branch}"
+                        await self.execute(sandbox.id, setup_cmd, timeout=30)
+                        logger.info(f"Copied {owner}/{repo_name} from local cache to sandbox {sandbox.id}")
+                        return
+                    else:
+                        logger.warning(f"docker cp failed: {copy_result.stderr}, falling back to git clone")
 
         # Fallback to git clone if local cache not available
         token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")

@@ -616,9 +616,12 @@ async def process_message(
 
     async def wrapped_github_code(**kwargs):
         """Wrapper that injects Discord context for code agent (admin only)."""
+        logger.info(f"wrapped_github_code called with action={kwargs.get('action', 'N/A')}, user_is_admin={user_is_admin}")
         if err := check_admin("github_code", kwargs.get("action", "")):
+            logger.warning(f"wrapped_github_code blocked by admin check: {err}")
             return err
         if original_handlers["github_code"] is None:
+            logger.warning("wrapped_github_code: original handler is None")
             return {"error": "Code agent not available"}
         # Inject Discord context
         kwargs["discord_channel"] = channel
@@ -653,7 +656,8 @@ async def process_message(
 
         # Log tool usage for debugging
         if tool_calls:
-            tool_names = [tc["function"]["name"] for tc in tool_calls]
+            # Strip API prefix from tool names for cleaner logging
+            tool_names = [tc["function"]["name"].split(":")[-1] if ":" in tc["function"]["name"] else tc["function"]["name"] for tc in tool_calls]
             logger.info(f"Tools called: {', '.join(tool_names)}")
 
         # Check if issue was created or comment added
