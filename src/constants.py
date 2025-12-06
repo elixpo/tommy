@@ -499,19 +499,19 @@ Actions:
             "name": "polly_agent",
             "description": """Code agent for git operations and autonomous coding. USE THIS - never say "I cannot".
 
-**action=task AUTO-CREATES sandbox** - just call it, sandbox spins up automatically.
+**DYNAMIC WORKFLOW**: task → read ccr_response → decide next step → update embed → repeat or finish
 
-**CRITICAL: task param must include FULL context** - issue body, file paths, code snippets, everything the agent needs. Don't just pass "fix issue 5735", pass the FULL issue content you got from github_issue.
+**CRITICAL: task param must include FULL context** - issue body, file paths, code snippets. Read ccr_response and respond appropriately.
 
 Autonomous Tasks:
-- task: Full coding task. Pass COMPLETE context (issue body, relevant code). Returns sandbox_id.
-- plan: Create plan without executing
+- task: Coding task. Pass COMPLETE context. Returns ccr_response (READ IT), sandbox_id, task_id.
 - status: Check task status (task_id)
+- update_embed: Update Discord embed (task_id, status, finish=true to close)
 
-Sandbox Operations (sandbox_id returned from task):
+Sandbox Operations:
 - run_in_sandbox: Run command (sandbox_id, command)
 - read_sandbox_file/write_sandbox_file: File ops (sandbox_id, file_path)
-- destroy_sandbox: Cleanup (sandbox_id) [confirm]
+- destroy_sandbox: Cleanup (sandbox_id, task_id) [confirm]
 
 Git Operations [admin]:
 - list_branches/create_branch/delete_branch: Branch management [confirm for delete]
@@ -526,7 +526,7 @@ Read ops always safe. Write ops require admin.""",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["task", "plan", "status", "run_in_sandbox", "read_sandbox_file", "write_sandbox_file", "destroy_sandbox", "list_branches", "create_branch", "delete_branch", "read_file", "list_files", "edit_file", "commit", "push", "open_pr"],
+                        "enum": ["task", "status", "update_embed", "run_in_sandbox", "read_sandbox_file", "write_sandbox_file", "destroy_sandbox", "list_branches", "create_branch", "delete_branch", "read_file", "list_files", "edit_file", "commit", "push", "open_pr"],
                         "description": "Action to perform"
                     },
                     "sandbox_id": {

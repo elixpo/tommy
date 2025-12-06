@@ -156,7 +156,10 @@ async def tool_polly_agent(
             return await _handle_write_sandbox_file(kwargs.get("sandbox_id"), file_path, file_content)
 
         if action == "destroy_sandbox":
-            return await _handle_destroy_sandbox(kwargs.get("sandbox_id"), discord_user_name)
+            return await _handle_destroy_sandbox(kwargs.get("sandbox_id"), kwargs.get("task_id"), discord_user_name)
+
+        if action == "update_embed":
+            return await _handle_update_embed(kwargs.get("task_id"), kwargs.get("status"), kwargs.get("finish", False))
 
         # Git operations - use GitHub API directly
         if action == "create_branch":
@@ -183,7 +186,7 @@ async def tool_polly_agent(
         if action == "open_pr":
             return await _handle_open_pr(repo, branch, base_branch, pr_title, pr_body)
 
-        return {"error": f"Unknown action: {action}. Available: task, status, run_in_sandbox, read_sandbox_file, write_sandbox_file, destroy_sandbox, list_branches, create_branch, delete_branch, read_file, list_files, edit_file, commit, push, open_pr"}
+        return {"error": f"Unknown action: {action}. Available: task, status, update_embed, run_in_sandbox, read_sandbox_file, write_sandbox_file, destroy_sandbox, list_branches, create_branch, delete_branch, read_file, list_files, edit_file, commit, push, open_pr"}
 
     except Exception as e:
         logger.exception("Error in polly_agent tool")
@@ -302,7 +305,7 @@ async def _handle_write_sandbox_file(sandbox_id: Optional[str], file_path: Optio
         return {"error": f"Failed to write file: {e}"}
 
 
-async def _handle_destroy_sandbox(sandbox_id: Optional[str], user_name: Optional[str]) -> dict:
+async def _handle_destroy_sandbox(sandbox_id: Optional[str], task_id: Optional[str], user_name: Optional[str]) -> dict:
     """Destroy a sandbox - only the creator can confirm."""
     if not sandbox_id:
         return {"error": "sandbox_id is required"}
@@ -322,12 +325,47 @@ async def _handle_destroy_sandbox(sandbox_id: Optional[str], user_name: Optional
                 "initiated_by": sandbox.initiated_by,
             }
 
+    # Finish the embed if we have a task_id
+    if task_id and task_id in _running_tasks:
+        embed_manager = _running_tasks[task_id].get("embed_manager")
+        if embed_manager:
+            embed_manager.set_status("Sandbox destroyed")
+            await embed_manager.finish(success=True)
+
     await sandbox_manager.destroy(sandbox_id, force=True)
 
     return {
         "success": True,
         "sandbox_id": sandbox_id,
         "message": f"Sandbox {sandbox_id} has been destroyed.",
+    }
+
+
+async def _handle_update_embed(task_id: Optional[str], status: Optional[str], finish: bool = False) -> dict:
+    """Update the Discord embed for a task. Bot AI can call this to show progress."""
+    if not task_id:
+        return {"error": "task_id is required"}
+
+    if task_id not in _running_tasks:
+        return {"error": f"Task {task_id} not found"}
+
+    embed_manager = _running_tasks[task_id].get("embed_manager")
+    if not embed_manager:
+        return {"error": f"No embed manager for task {task_id}"}
+
+    if status:
+        embed_manager.set_status(status)
+
+    if finish:
+        await embed_manager.finish(success=True)
+    else:
+        await embed_manager.update()
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "status": status,
+        "finished": finish,
     }
 
 
@@ -472,14 +510,17 @@ async def _handle_code_task(
                     embed_manager.fail_step(idx)
 
             if result.success:
-                status_msg = f"Done! {len(result.files_changed)} file(s) changed"
+                status_msg = f"ccr done - {len(result.files_changed)} file(s) changed"
                 if result.pr_url:
                     status_msg += f" | [PR]({result.pr_url})"
                 embed_manager.set_status(status_msg)
             else:
-                embed_manager.set_status(f"Error: {result.error or 'Task failed'}")
+                embed_manager.set_status(f"ccr error: {result.error or 'Task failed'}")
 
-            await embed_manager.finish(success=result.success)
+            await embed_manager.update()
+            # DON'T finish yet - keep embed live so bot AI can update it
+            # Store embed_manager for later updates
+            _running_tasks[task_id]["embed_manager"] = embed_manager
 
         # Update tracking
         _running_tasks[task_id]["phase"] = "complete" if result.success else "failed"
