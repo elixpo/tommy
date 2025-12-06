@@ -1,17 +1,17 @@
 """
-Code Agent - Claude Code powered coding agent for Polli Discord bot.
+Code Agent - Coding agent for Polli Discord bot.
 
 Architecture:
-- Bot AI (Gemini) handles user intent and conversation
-- Claude Code (via ccr) handles all actual coding work
+- Bot AI handles user intent and conversation
+- ccr handles all actual coding work
 - Single Discord embed updates in real-time (no message spam)
 - Sandbox stays alive for follow-up commands
 
 Flow:
 1. User requests coding task via Discord
-2. Bot AI (Gemini) interprets intent, builds context
+2. Bot AI interprets intent, builds context
 3. Creates Docker sandbox, clones repo
-4. Runs Claude Code via `ccr code "prompt"`
+4. Runs ccr with the task prompt
 5. Streams output, updates Discord embed
 6. Sandbox persists for follow-ups (more changes, PR creation, etc.)
 """
@@ -36,7 +36,7 @@ from .output_summarizer import OutputSummarizer, OutputSummary, output_summarize
 from .session_embeddings import SessionEmbeddings, SessionEmbeddingsManager, session_embeddings_manager
 
 __all__ = [
-    # Claude Code agent
+    # Code agent
     "ClaudeCodeAgent",
     "ClaudeCodeConfig",
     "ClaudeCodeResult",

@@ -1,8 +1,8 @@
 """
-Output summarizer for Claude Code.
+Output summarizer for code agent.
 
-Takes verbose Claude Code output and generates short, Discord-friendly summaries.
-Uses Gemini (fast/cheap) to interpret and summarize.
+Takes verbose code agent output and generates short, Discord-friendly summaries.
+Uses fast models to interpret and summarize.
 """
 
 import asyncio
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OutputSummary:
-    """Summary of Claude Code output."""
+    """Summary of code agent output."""
     short_status: str  # 1-line status for embed (e.g., "Fixed bug in getImageURL.js")
     actions_taken: List[str]  # List of actions (e.g., ["Read src/utils.js", "Edited line 45"])
     current_activity: str  # What it's doing now
@@ -29,12 +29,12 @@ class OutputSummary:
 
 class OutputSummarizer:
     """
-    Summarizes Claude Code output for Discord.
+    Summarizes code agent output for Discord.
 
-    Uses pattern matching for speed, falls back to Gemini for complex output.
+    Uses pattern matching for speed, falls back to AI for complex output.
     """
 
-    # Patterns to extract info from Claude Code output
+    # Patterns to extract info from code agent output
     PATTERNS = {
         "read_file": r"(?:Reading|Read|Examining)\s+[`']?([^`'\n]+)[`']?",
         "edit_file": r"(?:Editing|Edited|Modified|Modifying)\s+[`']?([^`'\n]+)[`']?",
@@ -148,7 +148,7 @@ class OutputSummarizer:
         Use Gemini to generate a human-friendly summary.
 
         Args:
-            output: Claude Code output to summarize
+            output: Code agent output to summarize
             task_context: Original task description for context
             max_length: Maximum summary length
 

@@ -1,16 +1,16 @@
 """
 GitHub Code tool handler for Discord bot integration.
 
-Uses Claude Code (via claude-code-router) as the coding engine.
+Uses ccr (code router) as the coding engine.
 
 Architecture:
-- Bot AI (Gemini) handles user intent and conversation
-- Claude Code handles all actual coding work (read, edit, test, git)
+- Bot AI handles user intent and conversation
+- ccr handles all actual coding work (read, edit, test, git)
 - Single Discord embed updates in real-time (no message spam)
 - Sandbox stays alive for follow-up commands
 
 Available actions:
-- task: Full coding workflow using Claude Code
+- task: Full coding workflow
 - status: Check running task status
 - create_branch: Create a new branch
 - edit_file: Edit a file directly
@@ -32,8 +32,8 @@ from datetime import datetime
 import discord
 
 from ..sandbox import sandbox_manager, Sandbox
-from ..claude_code_agent import get_claude_code_agent, ClaudeCodeResult
-from ..embed_builder import ProgressEmbedManager
+from ..claude_code_agent import get_claude_code_agent, ClaudeCodeResult, parse_todos_from_output, TodoItem
+from ..embed_builder import ProgressEmbedManager, StepStatus
 from ..output_summarizer import output_summarizer
 
 logger = logging.getLogger(__name__)
@@ -69,16 +69,16 @@ async def tool_github_code(
     GitHub Code tool handler - flexible git operations.
 
     Architecture:
-        YOU (Gemini) drive the workflow - Claude Code just executes coding tasks.
+        YOU drive the workflow - the code agent just executes coding tasks.
         After 'task' action completes, YOU decide what to do next based on context.
         There are NO predefined steps - use your judgment to:
         - Ask users questions when their input adds value
         - Run tests/builds via sandbox if relevant
         - Create PRs when changes are ready
-        - Send follow-up prompts to Claude Code for more work
+        - Send follow-up prompts to the code agent for more work
 
     Actions:
-        task: Run coding task via Claude Code (returns sandbox_id for follow-ups)
+        task: Run coding task (returns sandbox_id for follow-ups)
         status: Check running task status
         run_in_sandbox: Execute ANY command in sandbox (tests, builds, etc)
         read_sandbox_file: Read file from sandbox
@@ -136,9 +136,9 @@ async def tool_github_code(
         if action == "list_branches":
             return await _handle_list_branches(repo)
 
-        # task action uses Claude Code
+        # task action uses code agent
         if action == "task":
-            return await _handle_claude_code_task(
+            return await _handle_code_task(
                 task=task,
                 repo=repo,
                 branch=branch,
@@ -332,7 +332,7 @@ async def _handle_destroy_sandbox(sandbox_id: Optional[str], user_name: Optional
     }
 
 
-async def _handle_claude_code_task(
+async def _handle_code_task(
     task: str,
     repo: str,
     branch: str,
@@ -340,15 +340,15 @@ async def _handle_claude_code_task(
     user_name: Optional[str] = None,
 ) -> dict:
     """
-    Handle task using Claude Code CLI (via ccr).
+    Handle coding task via ccr.
 
-    This is the NEW architecture:
+    This architecture:
     - Creates sandbox with repo cloned
-    - Installs Claude Code + ccr
-    - Runs Claude Code with the task prompt
+    - Installs ccr
+    - Runs the task prompt
     - Returns results with sandbox still running for follow-ups
 
-    The bot AI (Gemini) handles:
+    The bot AI handles:
     - Building task context
     - Summarizing output for Discord
     - Managing user interactions (pause, resume, etc.)
@@ -364,25 +364,25 @@ async def _handle_claude_code_task(
         "task": task,
         "repo": repo,
         "branch": branch,
-        "phase": "claude_code",
+        "phase": "coding",
         "started_at": datetime.utcnow(),
         "messages": [],
     }
 
     # Create progress embed if Discord channel available
     embed_manager: Optional[ProgressEmbedManager] = None
+    dynamic_todo_indices: dict[str, int] = {}  # Track todo content -> step index
     if channel:
         embed_manager = ProgressEmbedManager(channel)
         try:
             await embed_manager.start(
                 title=f"Working on: {task[:50]}...",
-                description=f"Using Claude Code for `{repo}:{branch}`",
+                description=f"Repository: `{repo}:{branch}`",
                 repo_url=f"https://github.com/{repo}",
             )
-            embed_manager.add_step("Create sandbox")
-            embed_manager.add_step("Setup Claude Code")
-            embed_manager.add_step("Execute task")
-            embed_manager.add_step("Collect results")
+            # Initial setup steps
+            embed_manager.add_step("Creating sandbox")
+            embed_manager.add_step("Setting up environment")
             await embed_manager.update()
         except Exception as e:
             logger.warning(f"Failed to create progress embed: {e}")
@@ -408,28 +408,46 @@ async def _handle_claude_code_task(
         if embed_manager:
             embed_manager.complete_step(0, f"Sandbox {sandbox.id}")
             embed_manager.start_step(1)
-            embed_manager.set_status("Installing Claude Code and ccr...")
+            embed_manager.set_status("Setting up coding environment...")
             await embed_manager.update()
 
-        # Step 2-3: Run Claude Code via the agent
+        # Step 2-3: Run task via the agent
         agent = get_claude_code_agent()
 
-        # Progress callback for the agent
+        # Progress callback for the agent - dynamically updates todos
         async def on_progress(message: str):
+            nonlocal dynamic_todo_indices
             _running_tasks[task_id]["messages"].append(message)
+
             if embed_manager:
-                # Parse message for step updates
-                if "setup" in message.lower() or "install" in message.lower():
-                    embed_manager.set_status(message)
-                elif "starting" in message.lower():
+                # Check if setup is complete
+                if "starting" in message.lower() or "🚀" in message:
                     embed_manager.complete_step(1)
-                    embed_manager.start_step(2)
-                    embed_manager.set_status(message)
-                elif "completed" in message.lower():
-                    embed_manager.complete_step(2)
-                    embed_manager.start_step(3)
-                else:
-                    embed_manager.set_status(message)
+                    embed_manager.set_status("Working on task...")
+                    await embed_manager.update()
+                    return
+
+                # Try to parse todos from accumulated output
+                accumulated = "\n".join(_running_tasks[task_id]["messages"])
+                todos = parse_todos_from_output(accumulated)
+
+                # Update embed with parsed todos
+                for todo in todos:
+                    if todo.content not in dynamic_todo_indices:
+                        # Add new todo step
+                        idx = embed_manager.add_step(todo.content)
+                        dynamic_todo_indices[todo.content] = idx
+
+                    idx = dynamic_todo_indices[todo.content]
+                    if todo.status == "completed":
+                        embed_manager.complete_step(idx)
+                    elif todo.status == "in_progress":
+                        embed_manager.start_step(idx)
+                    elif todo.status == "failed":
+                        embed_manager.fail_step(idx)
+
+                # Update status message
+                embed_manager.set_status(message[:100] if len(message) > 100 else message)
                 await embed_manager.update()
 
         result: ClaudeCodeResult = await agent.run_task(
@@ -438,13 +456,30 @@ async def _handle_claude_code_task(
             on_progress=on_progress,
         )
 
-        # Step 4: Collect results
+        # Final embed update with all todos from result
         if embed_manager:
-            embed_manager.complete_step(3)
+            # Add any final todos not caught during streaming
+            for todo in result.todos:
+                if todo.content not in dynamic_todo_indices:
+                    idx = embed_manager.add_step(todo.content)
+                    dynamic_todo_indices[todo.content] = idx
+
+                idx = dynamic_todo_indices[todo.content]
+                if todo.status == "completed":
+                    embed_manager.complete_step(idx)
+                elif todo.status == "in_progress":
+                    embed_manager.complete_step(idx)  # Mark as done at end
+                elif todo.status == "failed":
+                    embed_manager.fail_step(idx)
+
             if result.success:
-                embed_manager.set_status(f"Completed! {len(result.files_changed)} files changed")
+                status_msg = f"Done! {len(result.files_changed)} file(s) changed"
+                if result.pr_url:
+                    status_msg += f" | [PR]({result.pr_url})"
+                embed_manager.set_status(status_msg)
             else:
-                embed_manager.set_status(f"Error: {result.error or 'Unknown error'}")
+                embed_manager.set_status(f"Error: {result.error or 'Task failed'}")
+
             await embed_manager.finish(success=result.success)
 
         # Update tracking
@@ -458,6 +493,9 @@ async def _handle_claude_code_task(
             max_length=200
         )
 
+        # Include todos in response
+        todos_summary = [{"content": t.content, "status": t.status} for t in result.todos]
+
         return {
             "success": result.success,
             "task_id": task_id,
@@ -469,19 +507,20 @@ async def _handle_claude_code_task(
             "files_changed": result.files_changed,
             "commits_made": result.commits_made,
             "pr_url": result.pr_url,
+            "todos": todos_summary,
             "output_preview": result.output[-1000:] if result.output else "",
             "duration": result.duration_seconds,
             "error": result.error,
             # Hint for AI - guide Gemini to make smart decisions
             "_ai_hint": (
-                "SANDBOX ACTIVE: You can send follow-up tasks to Claude Code via this sandbox. "
-                "Claude Code runs in a full Linux environment and can execute ANY commands (tests, builds, linting, etc). "
+                "SANDBOX ACTIVE: You can send follow-up tasks via this sandbox. "
+                "The sandbox runs in a full Linux environment and can execute ANY commands (tests, builds, linting, etc). "
                 "\n\nYOU DECIDE what to do next based on context - there are NO predefined steps. Consider: "
                 "\n- Did the task complete successfully? Summarize changes for the user. "
                 "\n- Should tests be run? Only if relevant to changes or user requested. "
                 "\n- Is user input needed? ASK if: multiple valid approaches exist, changes are significant, or you're unsure about direction. "
                 "\n- Ready for PR? Offer to create one if changes look good. "
-                "\n- More work needed? You can send another prompt to Claude Code. "
+                "\n- More work needed? You can send another task prompt. "
                 "\n\nActions available: run_in_sandbox (any command), read_sandbox_file, write_sandbox_file, open_pr, destroy_sandbox. "
                 "Use your judgment - engage users when their input adds value, not for every decision."
             )
@@ -490,7 +529,7 @@ async def _handle_claude_code_task(
     except Exception as e:
         _running_tasks[task_id]["phase"] = "failed"
         _running_tasks[task_id]["messages"].append(f"Error: {e}")
-        logger.exception("Claude Code task failed")
+        logger.exception("Task failed")
 
         if embed_manager:
             embed_manager.set_status(f"Error: {e}")

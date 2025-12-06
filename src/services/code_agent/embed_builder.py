@@ -1,5 +1,5 @@
 """
-Discord embed builder for Claude Code progress updates.
+Discord embed builder for code task progress updates.
 
 Creates a single embed that updates in real-time with:
 - Task header (issue title, PR title, etc.)

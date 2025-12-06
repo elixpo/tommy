@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SandboxConfig:
     """Configuration for a sandbox."""
-    image: str = "node:20-slim"  # Node.js for Claude Code + ccr
+    image: str = "node:20-slim"  # Node.js for ccr
     memory_limit: str = "2g"
     cpu_limit: float = 2.0
     timeout: int = 300  # 5 minutes default

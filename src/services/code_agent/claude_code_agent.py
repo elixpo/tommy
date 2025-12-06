@@ -1,15 +1,15 @@
 """
-Claude Code Agent - Uses Claude Code CLI (via ccr) for coding tasks.
+Code Agent - Uses ccr CLI for coding tasks.
 
 Architecture:
-- Bot AI (Gemini) interprets user intent and builds context
+- Bot AI interprets user intent and builds context
 - Creates Docker sandbox with repo cloned
-- Installs Claude Code + ccr in sandbox
-- Runs Claude Code via `ccr code "prompt"`
-- Streams output back, Gemini summarizes for Discord
+- Installs ccr in sandbox
+- Runs coding tasks via `ccr code "prompt"`
+- Streams output back for Discord
 
 This replaces the complex AutonomousAgent with a cleaner architecture
-where Claude Code handles all the coding work.
+where ccr handles all the coding work.
 """
 
 import asyncio
@@ -17,13 +17,82 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Awaitable
+from typing import Optional, Callable, Awaitable, List
 from datetime import datetime
 from enum import Enum
 
 from .sandbox import SandboxManager, sandbox_manager, Sandbox, CommandResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TodoItem:
+    """A todo item extracted from Claude Code output."""
+    content: str
+    status: str = "pending"  # pending, in_progress, completed
+
+
+def parse_todos_from_output(output: str) -> List[TodoItem]:
+    """
+    Parse todo items from Claude Code output.
+
+    Claude Code outputs todos in various formats:
+    - ⬜ Pending task
+    - 🔄 In progress task
+    - ✅ Completed task
+    - [ ] Unchecked
+    - [x] Checked
+    - "- task name" in todo lists
+    """
+    todos = []
+    seen = set()
+
+    lines = output.split('\n')
+
+    for line in lines:
+        line = line.strip()
+        if not line or len(line) < 3:
+            continue
+
+        status = "pending"
+        content = None
+
+        # Check for emoji-based todos
+        if line.startswith('⬜') or line.startswith('◻'):
+            content = line[1:].strip().lstrip('- ').strip()
+            status = "pending"
+        elif line.startswith('🔄') or line.startswith('⏳'):
+            content = line[1:].strip().lstrip('- ').strip()
+            status = "in_progress"
+        elif line.startswith('✅') or line.startswith('✓'):
+            content = line[1:].strip().lstrip('- ').strip()
+            status = "completed"
+        elif line.startswith('❌'):
+            content = line[1:].strip().lstrip('- ').strip()
+            status = "failed"
+        # Check for markdown checkbox todos
+        elif line.startswith('- [ ]') or line.startswith('* [ ]'):
+            content = line[5:].strip()
+            status = "pending"
+        elif line.startswith('- [x]') or line.startswith('* [x]') or line.startswith('- [X]'):
+            content = line[5:].strip()
+            status = "completed"
+        # Check for numbered todos like "1. [in_progress] Fix bug"
+        elif re.match(r'^\d+\.\s*\[(pending|in_progress|completed)\]', line):
+            match = re.match(r'^\d+\.\s*\[(pending|in_progress|completed)\]\s*(.+)', line)
+            if match:
+                status = match.group(1)
+                content = match.group(2).strip()
+
+        if content and len(content) > 2 and content not in seen:
+            # Skip generic/noisy items
+            skip_patterns = ['token', 'cost', 'session', 'api', 'model']
+            if not any(skip in content.lower() for skip in skip_patterns):
+                seen.add(content)
+                todos.append(TodoItem(content=content[:100], status=status))
+
+    return todos[:10]  # Limit to 10 todos
 
 # Callback types
 ProgressCallback = Callable[[str], Awaitable[None]]
@@ -82,6 +151,7 @@ class ClaudeCodeResult:
     pr_url: Optional[str] = None
     error: Optional[str] = None
     duration_seconds: int = 0
+    todos: List[TodoItem] = field(default_factory=list)  # Parsed todo items
 
 
 class ClaudeCodeAgent:
@@ -267,7 +337,7 @@ chmod 666 /tmp/claude-code-reference-count.txt
         self._progress[sandbox_id] = progress
 
         if on_progress:
-            await on_progress("🔧 Setting up Claude Code environment...")
+            await on_progress("🔧 Setting up coding environment...")
 
         # Setup sandbox if needed
         setup_success = await self.setup_sandbox(sandbox_id)
@@ -286,7 +356,7 @@ chmod 666 /tmp/claude-code-reference-count.txt
         progress.current_step = "Running Claude Code"
 
         if on_progress:
-            await on_progress("🚀 Starting Claude Code task...")
+            await on_progress("🚀 Starting task...")
 
         # Run Claude Code via ccr
         # Escape the prompt for shell
@@ -328,6 +398,9 @@ chmod 666 /tmp/claude-code-reference-count.txt
         commits = await self._get_recent_commits(sandbox_id)
         pr_url = self._extract_pr_url(result.stdout)
 
+        # Parse todos from Claude Code output
+        todos = parse_todos_from_output(result.stdout)
+
         progress.steps_completed.append("Collect results")
         progress.status = AgentStatus.COMPLETED
 
@@ -341,7 +414,8 @@ chmod 666 /tmp/claude-code-reference-count.txt
             files_changed=files_changed,
             commits_made=commits,
             pr_url=pr_url,
-            duration_seconds=progress.elapsed_seconds()
+            duration_seconds=progress.elapsed_seconds(),
+            todos=todos,
         )
 
     async def _execute_with_streaming(
