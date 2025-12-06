@@ -2,8 +2,8 @@
 Multi-model router for the coding agent using Pollinations API.
 
 All models are accessed through Pollinations API:
-- gemini-large: Planning, understanding - 1M context for large repos
-- claude-large: Coding, implementation - best code quality
+- gemini-large: Understanding - large context for codebase analysis
+- claude-large: Coding - best code quality
 - claude: Testing, quick fixes - fast iteration
 - kimi-k2-thinking: Autonomous reviewer - replaces human-in-the-loop
 """
@@ -47,60 +47,52 @@ class ModelConfig:
 
 
 # Model configurations optimized for coding agent tasks
+# Using Pollinations API model names
 MODELS = {
     "gemini-large": ModelConfig(
-        name="gemini-large",
+        name="gemini-large",  # Large context for codebase analysis
         max_tokens=65536,
         supports_tools=True,
         supports_vision=True,
         thinking_enabled=False,
     ),
     "claude-large": ModelConfig(
-        name="claude-large",
+        name="claude-large",  # Best code quality
         max_tokens=64000,
         supports_tools=True,
         supports_vision=True,
         thinking_enabled=False,
     ),
     "claude": ModelConfig(
-        name="claude",
+        name="claude",  # Fast iteration
         max_tokens=16000,
         supports_tools=True,
         supports_vision=True,
         thinking_enabled=False,
     ),
     "kimi-k2-thinking": ModelConfig(
-        name="kimi-k2-thinking",
+        name="kimi-k2-thinking",  # Deep thinking for code review
         max_tokens=32000,
         supports_tools=True,
         supports_vision=False,
-        # Enable deep thinking for autonomous reviewer
         thinking_enabled=True,
-        thinking_budget=10000,  # Allow substantial thinking tokens
-        reasoning_effort="high",  # Maximum reasoning for code review
-    ),
-    # Web search models - Gemini with search grounding
-    "gemini-search": ModelConfig(
-        name="gemini-search",  # Gemini 2.5 Flash with search
-        max_tokens=8192,
-        supports_tools=False,  # Search is built-in
-        supports_vision=False,
-        thinking_enabled=False,
+        thinking_budget=10000,
+        reasoning_effort="high",
     ),
     # Perplexity models for web search
     "perplexity-fast": ModelConfig(
-        name="sonar",  # Perplexity Sonar - fast non-reasoning
+        name="perplexity-fast",  # Simple web search
         max_tokens=8192,
         supports_tools=False,
         supports_vision=False,
         thinking_enabled=False,
     ),
     "perplexity-reasoning": ModelConfig(
-        name="sonar-reasoning",  # Perplexity Sonar reasoning - deep search
+        name="perplexity-reasoning",  # Complex/logical web search
         max_tokens=16000,
         supports_tools=False,
         supports_vision=False,
-        thinking_enabled=True,  # Has reasoning capability
+        thinking_enabled=True,
         thinking_budget=5000,
         reasoning_effort="medium",
     ),
@@ -108,13 +100,13 @@ MODELS = {
 
 # Task to model mapping
 TASK_MODEL_MAP: dict[TaskType, str] = {
-    "understanding": "gemini-large",   # 1M context for large codebases
-    "planning": "gemini-large",        # Complex planning with full context
-    "coding": "claude-large",          # Best code quality
-    "testing": "claude",               # Fast iteration for test loops
-    "review": "kimi-k2-thinking",      # Autonomous human-in-the-loop
-    "search": "perplexity-fast",        # Default web search (fast Perplexity)
-    "quick": "claude",                 # Quick simple tasks
+    "understanding": "gemini-large",      # 1. Large context for codebase
+    "planning": "claude",                 # 2. Planning
+    "coding": "claude-large",             # 3. Best code quality
+    "testing": "claude",                  # 4. Fast iteration
+    "review": "kimi-k2-thinking",         # 5. Deep thinking for review
+    "search": "perplexity-fast",          # 6. Web search (fast default)
+    "quick": "claude",                    # 7. Quick tasks
 }
 
 # Optimal parameters per task type for coding

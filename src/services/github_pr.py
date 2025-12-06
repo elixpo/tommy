@@ -1322,7 +1322,7 @@ class GitHubPRManager:
             review_text = await pollinations_client.generate_text(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                model="openai",  # Use a capable model
+                model="gemini-large",  # 1M context for large PR diffs
                 temperature=0.3
             )
 

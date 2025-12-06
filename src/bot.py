@@ -691,15 +691,14 @@ async def process_message(
         # Send response - if empty, ask AI to generate a proper response
         if not response_text:
             # AI returned empty - ask it to respond properly
-            retry_result = await pollinations_client.chat_with_tools(
+            retry_result = await pollinations_client._call_api_with_tools(
                 messages=[
                     {"role": "system", "content": "You are Polly. The user sent a message but you didn't respond. Generate a helpful response - ask clarifying questions if you're unsure what they want, or summarize what you found if you used tools."},
-                    {"role": "user", "content": user_message}
+                    {"role": "user", "content": text}
                 ],
-                tools=[],  # No tools, just respond
-                discord_username=message.author.name
+                tools=None  # No tools, just respond
             )
-            response_text = retry_result.get("response", "")
+            response_text = retry_result.get("content", "") if retry_result else ""
 
         if response_text:
             await send_long_message(channel, response_text, reply_to=reply_to)
