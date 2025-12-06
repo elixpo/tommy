@@ -183,9 +183,9 @@ class PollyBot(commands.Bot):
         await github_pr_manager.close()
         if github_app_auth:
             await github_app_auth.close()
-        # Clean up code agent
-        from .services.code_agent import code_agent
-        await code_agent.close()
+        # Clean up sandbox manager
+        from .services.code_agent import sandbox_manager
+        await sandbox_manager.stop()
         # Clean up embeddings if enabled
         if config.local_embeddings_enabled:
             from .services.embeddings import close as close_embeddings

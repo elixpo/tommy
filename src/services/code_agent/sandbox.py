@@ -617,7 +617,27 @@ class SandboxManager:
 
 # Global sandbox manager instance
 # Uses embeddings repo as local repo for on-demand file copy
-sandbox_manager = SandboxManager(
-    use_docker=os.getenv("SANDBOX_ENABLED", "false").lower() == "true",
-    local_repo_path=os.getenv("REPO_PATH"),  # Same path used for embeddings
-)
+# Import config here to avoid circular imports at module level
+def _create_sandbox_manager():
+    from ...config import config
+    return SandboxManager(
+        use_docker=config.sandbox_enabled,
+        local_repo_path=os.getenv("REPO_PATH"),  # Same path used for embeddings
+    )
+
+# Lazy initialization to avoid import issues
+_sandbox_manager = None
+
+def get_sandbox_manager() -> SandboxManager:
+    global _sandbox_manager
+    if _sandbox_manager is None:
+        _sandbox_manager = _create_sandbox_manager()
+    return _sandbox_manager
+
+# For backward compatibility - will be initialized on first access
+class _LazySandboxManager:
+    """Lazy proxy for sandbox_manager to allow config to load first."""
+    def __getattr__(self, name):
+        return getattr(get_sandbox_manager(), name)
+
+sandbox_manager = _LazySandboxManager()

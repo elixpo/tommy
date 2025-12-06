@@ -324,6 +324,9 @@ class PollinationsClient:
 
         async def execute_single(tool_call: dict) -> dict:
             func_name = tool_call["function"]["name"]
+            # Strip API prefix if present (e.g., "default_api:github_code" -> "github_code")
+            if ":" in func_name:
+                func_name = func_name.split(":")[-1]
             try:
                 args = json.loads(tool_call["function"]["arguments"])
             except json.JSONDecodeError:

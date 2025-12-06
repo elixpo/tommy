@@ -177,8 +177,9 @@ One-sentence summary:"""
 
         try:
             response = await model_router.chat(
+                model_id="claude",  # Fast model for quick summaries
                 messages=[{"role": "user", "content": prompt}],
-                task_type="quick",  # Use fast model
+                task_type="quick",
                 max_tokens=150,
             )
 
