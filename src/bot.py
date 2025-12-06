@@ -310,7 +310,7 @@ async def on_message(message: discord.Message):
         # If no text but replying or has images, let AI handle it
         if not text and not image_urls:
             text = "[User mentioned bot without text - greet them or ask how you can help]"
-        elif not text and image_urls:
+        if not text and image_urls:
             text = "[User attached screenshot(s)]"
 
         # Create session if needed (handles bot restart scenario)
@@ -352,7 +352,7 @@ async def on_message(message: discord.Message):
     # If no text but replying or has images, let AI handle it
     if not text and not image_urls:
         text = "[User mentioned bot without text - greet them or ask how you can help]"
-    elif not text and image_urls:
+    if not text and image_urls:
         text = "[User attached screenshot(s)]"
 
     # Check if message already has a thread - if so, respond there instead of creating new
@@ -622,9 +622,7 @@ async def process_message(
 
     async def wrapped_github_code(**kwargs):
         """Wrapper that injects Discord context for code agent (admin only)."""
-        logger.info(f"wrapped_github_code called: action={kwargs.get('action')}, user_is_admin={user_is_admin}")
         if err := check_admin("github_code", kwargs.get("action", "")):
-            logger.warning(f"wrapped_github_code blocked by check_admin: {err}")
             return err
         if original_handlers["github_code"] is None:
             return {"error": "Code agent not available"}
@@ -636,7 +634,6 @@ async def process_message(
         kwargs["_is_admin"] = True  # Already checked above
         kwargs.setdefault("interactive", True)
         kwargs.setdefault("human_review", True)
-        logger.info(f"wrapped_github_code passing to handler with _is_admin=True")
         return await original_handlers["github_code"](**kwargs)
 
     # Register wrapped handlers temporarily
@@ -645,9 +642,6 @@ async def process_message(
     pollinations_client.register_tool_handler("github_pr", wrapped_github_pr)
     if original_handlers["github_code"]:
         pollinations_client.register_tool_handler("github_code", wrapped_github_code)
-        logger.info(f"Registered wrapped_github_code handler for user_is_admin={user_is_admin}")
-    else:
-        logger.warning("github_code handler not available - CODE_AGENT_HANDLERS may be missing")
 
     try:
         # Process with native tool calling
@@ -663,9 +657,9 @@ async def process_message(
         tool_calls = result.get("tool_calls", [])
         tool_results = result.get("tool_results", [])
 
-        # Log tool usage for debugging (strip namespace prefix for cleaner logs)
+        # Log tool usage for debugging
         if tool_calls:
-            tool_names = [tc["function"]["name"].split(":")[-1] for tc in tool_calls]
+            tool_names = [tc["function"]["name"] for tc in tool_calls]
             logger.info(f"Tools called: {', '.join(tool_names)}")
 
         # Check if issue was created or comment added

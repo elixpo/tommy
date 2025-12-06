@@ -1,33 +1,50 @@
 """
-Code Agent - Autonomous AI developer for Polli Discord bot.
+Code Agent - Autonomous coding agent for Polli Discord bot.
 
-Philosophy: Give the AI raw capabilities and let it work like a human developer.
-No predefined workflows. No forced phases. Just shell access, web search, and intelligence.
+Architecture:
+- Gemini 2.5 Pro (gemini-large): Planning & codebase understanding (1M context)
+- Claude Opus 4.5 (claude-large): Coding & implementation
+- Claude Sonnet 4.5 (claude): Testing & quick iterations
+- Kimi K2 Thinking (kimi-k2-thinking): Autonomous reviewer OR
+- Human-in-the-loop: Real-time Discord feedback via reply messages
+- Perplexity Sonar (perplexity-fast): Web search (default)
+- Perplexity Reasoning (perplexity-reasoning): Complex web search
 
-AutonomousAgent (PRIMARY):
-- AI has full shell access to a sandboxed repo
-- Decides everything: what to read, write, test, commit
-- Works like a human developer with a terminal
-- Minimal tools: shell, web_search, ask_user, done
+Flow:
+1. UNDERSTAND (Gemini) - Analyze codebase, generate repo map
+2. PLAN (Gemini) - Create implementation plan
+3. REVIEW PLAN (Human or Kimi K2) - Approval/feedback with Discord replies
+4. CODE (Claude Large) - Execute implementation
+5. TEST (Claude) - Run tests, capture results
+6. FIX LOOP (Claude) - Fix failures, retry
+7. REVIEW CODE (Human or Kimi K2) - Final review with Discord replies
+8. COMMIT/PR - Create branch, commit, PR
 
-CodeAgent (LEGACY):
-- Fixed flow (plan -> code -> test -> fix)
-- Kept for backwards compatibility
+Mode System (Roo-Code style):
+- Orchestrator: Central brain that delegates to specialized modes
+- Specialized Modes: Isolated agents that report back to orchestrator
 
-Models (via Pollinations API):
-- claude-large: Best quality for coding tasks
-- gemini-large: Large context (1M) for codebase understanding
-- claude: Fast iteration for testing/fixes
-- kimi-k2-thinking: Deep reasoning for complex problems
-- perplexity-fast: Quick web search
-- perplexity-reasoning: Complex web search with reasoning
+Available Modes:
+- orchestrator: Analyzes tasks and delegates to appropriate modes
+- code-reviewer: Reviews code for quality, bugs, security
+- bug-fixer: Fixes bugs from any source
+- feature-builder: Implements new features
+- test-writer: Generates tests for code
+- refactorer: Code refactoring and cleanup
+- doc-writer: Documentation generation
+- researcher: Web search and information gathering
+- investigator: Investigate issues and propose solutions
+- issue-fixer: Fix GitHub issues autonomously
+- pr-fixer: Fix PR review feedback, failing tests, merge conflicts
 
-Mode System (optional, for structured workflows):
-- orchestrator, code-reviewer, bug-fixer, feature-builder, etc.
+Interactive Mode (default):
+- Live progress updates sent to Discord
+- Users can reply to any agent message
+- Reply "approve" to continue, "reject" to cancel
+- Any other reply is treated as feedback for revision
 """
 
 from .agent import CodeAgent, code_agent
-from .autonomous import AutonomousAgent, autonomous_agent, AutonomousResult
 from .models import ModelRouter, model_router
 from .sandbox import SandboxManager, sandbox_manager, Sandbox
 from .session_embeddings import SessionEmbeddings, SessionEmbeddingsManager, session_embeddings_manager
@@ -79,11 +96,6 @@ __all__ = [
     # Core agent
     "CodeAgent",
     "code_agent",
-    # Autonomous agent (AI decides workflow)
-    "AutonomousAgent",
-    "autonomous_agent",
-    "AutonomousResult",
-    # Model router
     "ModelRouter",
     "model_router",
     # Sandbox & Session Embeddings

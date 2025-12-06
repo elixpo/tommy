@@ -8,7 +8,6 @@ Provides comprehensive PR management:
 Uses GraphQL for most operations, REST API where necessary.
 """
 
-import asyncio
 import logging
 import re
 import aiohttp
@@ -61,7 +60,6 @@ class GitHubPRManager:
 
     def __init__(self):
         self._session: Optional[aiohttp.ClientSession] = None
-        self._session_lock = asyncio.Lock()  # Prevent race condition in session creation
 
     @property
     def repo(self) -> str:
@@ -76,17 +74,10 @@ class GitHubPRManager:
         return self.repo.split("/")[1]
 
     async def get_session(self) -> aiohttp.ClientSession:
-        # Fast path: return existing session without lock
-        if self._session is not None and not self._session.closed:
-            return self._session
-
-        # Slow path: acquire lock and create session
-        async with self._session_lock:
-            # Double-check after acquiring lock
-            if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=60, connect=10)
-                )
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60, connect=10)
+            )
         return self._session
 
     async def close(self):

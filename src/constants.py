@@ -813,20 +813,19 @@ def get_tools_with_embeddings(base_tools: list, embeddings_enabled: bool) -> lis
 
 # Risky actions that require user confirmation even for admins
 # These are destructive or hard-to-reverse operations
-# Format: "tool:action" -> description (to avoid duplicate keys)
 RISKY_ACTIONS = {
     # github_issue
-    "github_issue:close": "close this issue",
-    "github_issue:lock": "lock this issue",
-    "github_issue:edit": "edit this issue's title/body",
+    "close": "close this issue",
+    "lock": "lock this issue",
+    "edit": "edit this issue's title/body",
     # github_pr
-    "github_pr:merge": "merge this PR",
-    "github_pr:close": "close this PR",
-    "github_pr:request_changes": "request changes on this PR",
+    "merge": "merge this PR",
+    "close": "close this PR",
+    "request_changes": "request changes on this PR",
     # github_code
-    "github_code:delete_branch": "delete this branch",
+    "delete_branch": "delete this branch",
     # github_project
-    "github_project:remove": "remove this item from project",
+    "remove": "remove this item from project",
 }
 
 # =============================================================================
