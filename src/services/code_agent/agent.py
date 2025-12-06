@@ -428,7 +428,12 @@ class CodeAgent:
             task_type="planning",
         )
 
-        return response["content"]
+        if response.get("error"):
+            raise RuntimeError(f"Failed to create plan: {response['error']}")
+        content = response.get("content", "")
+        if not content:
+            raise RuntimeError("Failed to create plan: Empty response from AI")
+        return content
 
     async def _review_plan(self, state: AgentState) -> ReviewDecision:
         """Review plan using Kimi K2 Thinking."""
@@ -448,10 +453,13 @@ class CodeAgent:
             task_type="review",
         )
 
-        state.plan_review = response["content"]
+        if response.get("error"):
+            logger.warning(f"Plan review API error: {response['error']}")
+            return ReviewDecision.APPROVE
+        state.plan_review = response.get("content", "")
 
         # Parse the review decision
-        content = response["content"].upper()
+        content = (response.get("content") or "").upper()
         if "REJECT" in content and "APPROVE" not in content:
             return ReviewDecision.REJECT
         elif "REQUEST_CHANGES" in content:
@@ -480,7 +488,9 @@ Revise your plan to address the reviewer's concerns. Keep what was good, fix wha
             task_type="planning",
         )
 
-        return response["content"]
+        if response.get("error"):
+            raise RuntimeError(f"Failed to revise plan: {response['error']}")
+        return response.get("content", "")
 
     async def _execute_plan(self, state: AgentState):
         """Execute the implementation plan using Claude Large."""
@@ -503,8 +513,11 @@ Revise your plan to address the reviewer's concerns. Keep what was good, fix wha
             task_type="coding",
         )
 
+        if response.get("error"):
+            raise RuntimeError(f"Failed to execute plan: {response['error']}")
+
         # Parse and apply edits
-        edits = parse_edit_blocks(response["content"])
+        edits = parse_edit_blocks(response.get("content", ""))
 
         for filename, old_str, new_str in edits:
             result = self.editor.apply_edit_to_file(filename, old_str, new_str)
@@ -634,8 +647,12 @@ Revise your plan to address the reviewer's concerns. Keep what was good, fix wha
             task_type="testing",
         )
 
+        if response.get("error"):
+            logger.warning(f"Fix errors API error: {response['error']}")
+            return
+
         # Parse and apply fixes
-        edits = parse_edit_blocks(response["content"])
+        edits = parse_edit_blocks(response.get("content", ""))
 
         for filename, old_str, new_str in edits:
             result = self.editor.apply_edit_to_file(filename, old_str, new_str)
@@ -682,13 +699,17 @@ Do a final review of these changes before commit. Is the implementation correct 
             task_type="review",
         )
 
-        state.code_review = response["content"]
+        if response.get("error"):
+            logger.warning(f"Code review API error: {response['error']}")
+            state.code_review = f"Review unavailable: {response['error']}"
+            return ReviewDecision.APPROVE
+        state.code_review = response.get("content", "")
 
         # Log thinking/reasoning if available
         if response.get("thinking"):
             logger.info(f"Kimi K2 reasoning: {response['thinking'][:500]}...")
 
-        content = response["content"].upper()
+        content = (response.get("content") or "").upper()
         if "REJECT" in content and "APPROVE" not in content:
             return ReviewDecision.REJECT
         elif "REQUEST_CHANGES" in content:

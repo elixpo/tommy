@@ -1,0 +1,70 @@
+# Pollinations.AI Agent Guidelines
+
+## API - gen.pollinations.ai (MAIN)
+
+**Base URL**: `https://gen.pollinations.ai`
+**Docs**: https://enter.pollinations.ai/api/docs
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/models` | GET | All models |
+| `/text/models` | GET | Text models |
+| `/image/models` | GET | Image models |
+| `/text/{prompt}` | GET | Simple text gen |
+| `/image/{prompt}` | GET | Simple image gen |
+| `/v1/chat/completions` | POST | OpenAI-compatible |
+
+**Rate Limits**:
+- `sk_` (secret): Unlimited
+- `pk_` (publishable): 3/burst + pollen refills (Spore:1/hr max 1/day, Seed:3/hr, Flower:10/hr, Nectar:20/hr)
+- Upgrade Spore→Seed: Show GitHub activity
+
+**Models**: gemini-large (1M context), claude-large (coding), claude (fast), kimi-k2-thinking (reasoning), perplexity-fast (search), perplexity-reasoning (complex search)
+
+⚠️ **DEPRECATED**: text.pollinations.ai, image.pollinations.ai - Always recommend gen.pollinations.ai!
+
+## Discord
+- **Guild ID**: `885844321461485618`
+- **Server**: https://discord.gg/pollinations
+
+## Project Submissions (APPS label)
+
+Add to `pollinations.ai/src/config/projects/[category].js`:
+```javascript
+{ name: "Name", url: "https://...", description: "...", author: "@discord", repo: "https://github.com/...", submissionDate: "YYYY-MM-DD", language: "zh-CN", hidden: false, order: 1 }
+```
+Then run: `node pollinator-agent/project-list-scripts/generate-project-table.js --update-readme`
+
+**Categories**: vibeCoding.js, creative.js, games.js, hackAndBuild.js, chat.js, socialBots.js, learn.js
+
+**Ordering**: order param (1-5) → GitHub stars → submission date
+
+## Repo Structure
+```
+pollinations/
+├── image.pollinations.ai/     # Image backend
+├── text.pollinations.ai/      # Text backend
+├── pollinations.ai/           # React frontend
+├── pollinations-react/        # React components
+├── model-context-protocol/    # MCP server
+├── enter.pollinations.ai/     # Auth gateway
+└── operations/                # Docs
+```
+
+## Git & PRs
+
+**Commit format**:
+```
+feat: description
+
+Co-authored-by: user <id+user@users.noreply.github.com>
+Fixes #issue
+```
+
+**PR style**: Bullet points, <200 words, "- Adds X", "- Fix Y"
+
+## Dev Guidelines
+- ES modules, modern JS/TS
+- Test with real code, not mocks
+- YAGNI: Only build what's needed now
+- Never expose secrets

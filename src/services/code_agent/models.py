@@ -30,7 +30,7 @@ RETRY_DELAY = 5
 MAX_SEED = 2**31 - 1
 
 # Pollinations API URL
-POLLINATIONS_CHAT_URL = "https://text.pollinations.ai/openai"
+POLLINATIONS_CHAT_URL = f"{POLLINATIONS_API_BASE}/v1/chat/completions"
 
 
 @dataclass
