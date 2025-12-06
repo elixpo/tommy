@@ -260,18 +260,6 @@ async def on_message(message: discord.Message):
         logger.info("PR merge detected - embedding update scheduled")
         return
 
-    # Check for code agent human-in-the-loop replies first
-    # This allows users to reply to agent progress messages for feedback
-    if message.reference and message.reference.message_id:
-        from .services.code_agent.discord_progress import route_reply
-        try:
-            handled = await route_reply(message)
-            if handled:
-                # Reply was for code agent, don't process further
-                return
-        except Exception as e:
-            logger.warning(f"Error routing code agent reply: {e}")
-
     # Handle DMs - only subscription commands allowed
     if isinstance(message.channel, discord.DMChannel):
         await handle_dm_message(message)
