@@ -92,6 +92,67 @@ class PollinationsClient:
             await self._connector.close()
             self._connector = None
 
+    async def generate_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> Optional[str]:
+        """
+        Simple text generation without tools.
+
+        Args:
+            system_prompt: System message
+            user_prompt: User message
+            model: Model to use (defaults to config.pollinations_model)
+            temperature: Sampling temperature
+            max_tokens: Max tokens to generate
+
+        Returns:
+            Generated text or None on error
+        """
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {config.pollinations_token}"
+        }
+
+        url = f"{POLLINATIONS_API_BASE}/v1/chat/completions"
+        use_model = model or config.pollinations_model
+
+        payload = {
+            "model": use_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "seed": random.randint(0, MAX_SEED)
+        }
+
+        try:
+            session = await self.get_session()
+            async with session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=120)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data["choices"][0]["message"].get("content", "")
+                else:
+                    error_text = await response.text()
+                    logger.error(f"generate_text error: HTTP {response.status}: {error_text[:200]}")
+                    return None
+        except Exception as e:
+            logger.error(f"generate_text error: {e}")
+            return None
+
     def register_tool_handler(self, name: str, handler: callable):
         """Register a handler function for a tool."""
         self._tool_handlers[name] = handler

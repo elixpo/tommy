@@ -85,7 +85,7 @@ class Config:
         # AI CONFIG
         # =================================================================
         ai_cfg = cfg.get("ai", {})
-        self.pollinations_model = ai_cfg.get("model", "openai-large")
+        self.pollinations_model = ai_cfg.get("model", "gemini-large")
         self.fallback_model = ai_cfg.get("fallback_model", "openai")
 
         # Secret from .env
