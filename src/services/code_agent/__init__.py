@@ -1,101 +1,58 @@
 """
-Code Agent - Autonomous coding agent for Polli Discord bot.
+Code Agent - Claude Code powered coding agent for Polli Discord bot.
 
 Architecture:
-- Gemini 2.5 Pro (gemini-large): Planning & codebase understanding (1M context)
-- Claude Opus 4.5 (claude-large): Coding & implementation
-- Claude Sonnet 4.5 (claude): Testing & quick iterations
-- Kimi K2 Thinking (kimi-k2-thinking): Autonomous reviewer OR
-- Human-in-the-loop: Real-time Discord feedback via reply messages
-- Perplexity Sonar (perplexity-fast): Web search (default)
-- Perplexity Reasoning (perplexity-reasoning): Complex web search
+- Bot AI (Gemini) handles user intent and conversation
+- Claude Code (via ccr) handles all actual coding work
+- Single Discord embed updates in real-time (no message spam)
+- Sandbox stays alive for follow-up commands
 
 Flow:
-1. UNDERSTAND (Gemini) - Analyze codebase, generate repo map
-2. PLAN (Gemini) - Create implementation plan
-3. REVIEW PLAN (Human or Kimi K2) - Approval/feedback with Discord replies
-4. CODE (Claude Large) - Execute implementation
-5. TEST (Claude) - Run tests, capture results
-6. FIX LOOP (Claude) - Fix failures, retry
-7. REVIEW CODE (Human or Kimi K2) - Final review with Discord replies
-8. COMMIT/PR - Create branch, commit, PR
-
-Mode System (Roo-Code style):
-- Orchestrator: Central brain that delegates to specialized modes
-- Specialized Modes: Isolated agents that report back to orchestrator
-
-Available Modes:
-- orchestrator: Analyzes tasks and delegates to appropriate modes
-- code-reviewer: Reviews code for quality, bugs, security
-- bug-fixer: Fixes bugs from any source
-- feature-builder: Implements new features
-- test-writer: Generates tests for code
-- refactorer: Code refactoring and cleanup
-- doc-writer: Documentation generation
-- researcher: Web search and information gathering
-- investigator: Investigate issues and propose solutions
-- issue-fixer: Fix GitHub issues autonomously
-- pr-fixer: Fix PR review feedback, failing tests, merge conflicts
-
-Interactive Mode (default):
-- Live progress updates sent to Discord
-- Users can reply to any agent message
-- Reply "approve" to continue, "reject" to cancel
-- Any other reply is treated as feedback for revision
+1. User requests coding task via Discord
+2. Bot AI (Gemini) interprets intent, builds context
+3. Creates Docker sandbox, clones repo
+4. Runs Claude Code via `ccr code "prompt"`
+5. Streams output, updates Discord embed
+6. Sandbox persists for follow-ups (more changes, PR creation, etc.)
 """
 
-from .agent import CodeAgent, code_agent
 from .models import ModelRouter, model_router
 from .sandbox import SandboxManager, sandbox_manager, Sandbox
+from .claude_code_agent import (
+    ClaudeCodeAgent,
+    ClaudeCodeConfig,
+    ClaudeCodeResult,
+    TaskProgress,
+    AgentStatus,
+    get_claude_code_agent,
+)
+from .embed_builder import (
+    ProgressEmbed,
+    ProgressEmbedManager,
+    ChecklistStep,
+    StepStatus,
+)
+from .output_summarizer import OutputSummarizer, OutputSummary, output_summarizer
 from .session_embeddings import SessionEmbeddings, SessionEmbeddingsManager, session_embeddings_manager
-from .discord_progress import (
-    DiscordProgressReporter,
-    HumanFeedback,
-    HumanFeedbackType,
-    NotificationMode,
-    register_reporter,
-    unregister_reporter,
-    route_reply,
-)
-# Modes system
-from .modes import (
-    # Base classes
-    AgentMode,
-    ModeConfig,
-    WorkflowStep,
-    ToolGroup,
-    ModeState,
-    # Orchestrator
-    Orchestrator,
-    get_mode_capabilities,
-    list_mode_capabilities,
-    # Specialized modes
-    CodeReviewer,
-    BugFixer,
-    FeatureBuilder,
-    TestWriter,
-    Refactorer,
-    DocWriter,
-    Researcher,
-    Investigator,
-    IssueFixer,
-    PRFixer,
-    # Registry
-    MODES,
-    get_mode,
-    list_modes,
-    get_mode_by_task,
-    # Runner
-    ModeRunner,
-    ModeRunResult,
-    mode_runner,
-    init_mode_runner,
-)
 
 __all__ = [
-    # Core agent
-    "CodeAgent",
-    "code_agent",
+    # Claude Code agent
+    "ClaudeCodeAgent",
+    "ClaudeCodeConfig",
+    "ClaudeCodeResult",
+    "TaskProgress",
+    "AgentStatus",
+    "get_claude_code_agent",
+    # Progress embeds
+    "ProgressEmbed",
+    "ProgressEmbedManager",
+    "ChecklistStep",
+    "StepStatus",
+    # Output summarizer
+    "OutputSummarizer",
+    "OutputSummary",
+    "output_summarizer",
+    # Model router
     "ModelRouter",
     "model_router",
     # Sandbox & Session Embeddings
@@ -105,43 +62,4 @@ __all__ = [
     "SessionEmbeddings",
     "SessionEmbeddingsManager",
     "session_embeddings_manager",
-    # Discord integration
-    "DiscordProgressReporter",
-    "HumanFeedback",
-    "HumanFeedbackType",
-    "NotificationMode",
-    "register_reporter",
-    "unregister_reporter",
-    "route_reply",
-    # Modes base classes
-    "AgentMode",
-    "ModeConfig",
-    "WorkflowStep",
-    "ToolGroup",
-    "ModeState",
-    # Orchestrator
-    "Orchestrator",
-    "get_mode_capabilities",
-    "list_mode_capabilities",
-    # Specialized modes
-    "CodeReviewer",
-    "BugFixer",
-    "FeatureBuilder",
-    "TestWriter",
-    "Refactorer",
-    "DocWriter",
-    "Researcher",
-    "Investigator",
-    "IssueFixer",
-    "PRFixer",
-    # Registry
-    "MODES",
-    "get_mode",
-    "list_modes",
-    "get_mode_by_task",
-    # Runner
-    "ModeRunner",
-    "ModeRunResult",
-    "mode_runner",
-    "init_mode_runner",
 ]

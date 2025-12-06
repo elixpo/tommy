@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [main]
+    branches: [polly-v2]
   workflow_dispatch:  # Manual trigger
 
 jobs:
@@ -18,8 +18,10 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           script: |
             cd ~/Polly
-            git pull origin main
+            git fetch origin
+            git checkout polly-v2
+            git pull origin polly-v2
             source venv/bin/activate
             pip install -r requirements.txt --quiet
             sudo systemctl restart polly
-            echo "✅ Deployed successfully!"
+            echo "✅ Deployed polly-v2 successfully!"

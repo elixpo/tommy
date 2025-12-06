@@ -1,12 +1,16 @@
 """
 GitHub Code tool handler for Discord bot integration.
 
-This connects the CodeAgent to the Discord bot's tool calling system.
-Supports interactive mode with live Discord updates and human-in-the-loop.
+Uses Claude Code (via claude-code-router) as the coding engine.
+
+Architecture:
+- Bot AI (Gemini) handles user intent and conversation
+- Claude Code handles all actual coding work (read, edit, test, git)
+- Single Discord embed updates in real-time (no message spam)
+- Sandbox stays alive for follow-up commands
 
 Available actions:
-- task: Full coding workflow (plan -> code -> test -> commit/PR)
-- plan: Generate implementation plan only
+- task: Full coding workflow using Claude Code
 - status: Check running task status
 - create_branch: Create a new branch
 - edit_file: Edit a file directly
@@ -27,23 +31,15 @@ from datetime import datetime
 
 import discord
 
-from ..agent import CodeAgent, code_agent, AgentResult, AgentPhase
-from ..sandbox import sandbox_manager, Sandbox  # Only needed for task/plan actions
-from ..discord_progress import (
-    DiscordProgressReporter,
-    HumanFeedback,
-    HumanFeedbackType,
-    register_reporter,
-    unregister_reporter,
-)
+from ..sandbox import sandbox_manager, Sandbox
+from ..claude_code_agent import get_claude_code_agent, ClaudeCodeResult
+from ..embed_builder import ProgressEmbedManager
+from ..output_summarizer import output_summarizer
 
 logger = logging.getLogger(__name__)
 
 # Store running tasks for status checks
 _running_tasks: dict[str, dict] = {}
-
-# Store active interactive sessions
-_interactive_sessions: dict[int, dict] = {}  # channel_id -> session info
 
 
 async def tool_github_code(
@@ -51,8 +47,6 @@ async def tool_github_code(
     task: Optional[str] = None,
     repo: str = "pollinations/pollinations",
     branch: str = "main",
-    create_pr: bool = False,
-    max_fix_attempts: int = 5,
     task_id: Optional[str] = None,
     # Git operation parameters
     new_branch: Optional[str] = None,
@@ -64,13 +58,9 @@ async def tool_github_code(
     pr_body: Optional[str] = None,
     base_branch: Optional[str] = None,  # For PRs
     pattern: Optional[str] = None,  # For list_files
-    # Discord context for interactive mode (injected by bot.py)
+    # Discord context (injected by bot.py)
     discord_channel: Optional[discord.TextChannel] = None,
-    discord_bot: Optional[discord.Client] = None,
-    discord_user_id: Optional[int] = None,
     discord_user_name: Optional[str] = None,
-    interactive: bool = True,  # Enable live updates by default
-    human_review: bool = True,  # Use human review instead of AI
     # Admin flag - MUST be explicitly set by bot.py wrapper
     _is_admin: bool = False,
     **kwargs
@@ -78,25 +68,41 @@ async def tool_github_code(
     """
     GitHub Code tool handler - flexible git operations.
 
-    Actions:
-        task: Full coding workflow (plan -> code -> test -> commit/PR)
-        plan: Generate implementation plan only
-        status: Check running task status
+    Architecture:
+        YOU (Gemini) drive the workflow - Claude Code just executes coding tasks.
+        After 'task' action completes, YOU decide what to do next based on context.
+        There are NO predefined steps - use your judgment to:
+        - Ask users questions when their input adds value
+        - Run tests/builds via sandbox if relevant
+        - Create PRs when changes are ready
+        - Send follow-up prompts to Claude Code for more work
 
-        Git Operations (flexible):
-        create_branch: Create a new branch (needs: new_branch, repo, branch)
-        edit_file: Edit a file (needs: file_path, file_content OR old_content+file_content)
-        read_file: Read file contents (needs: file_path)
-        list_files: List files (needs: pattern optional)
-        commit: Commit staged changes (needs: commit_message)
-        push: Push to remote
-        open_pr: Create PR (needs: pr_title, pr_body optional, base_branch optional)
-        delete_branch: Delete a branch (needs: new_branch)
+    Actions:
+        task: Run coding task via Claude Code (returns sandbox_id for follow-ups)
+        status: Check running task status
+        run_in_sandbox: Execute ANY command in sandbox (tests, builds, etc)
+        read_sandbox_file: Read file from sandbox
+        write_sandbox_file: Write file to sandbox
+        destroy_sandbox: Destroy sandbox when done
+
+        Git Operations (via GitHub API):
+        create_branch: Create a new branch
+        edit_file: Edit a file directly
+        read_file: Read file contents
+        list_files: List files
+        commit: (no-op - commits auto-created)
+        push: (no-op - pushes auto-done)
+        open_pr: Create PR
+        delete_branch: Delete a branch
         list_branches: List all branches
+
+    Response fields:
+        _ai_hint: Guidance for YOU (Gemini) on what to consider next.
+                  NOT shown to users - just helps you decide.
 
     Args:
         action: Action to perform
-        task: Task description (for task/plan actions)
+        task: Task description (for task action)
         repo: Repository (owner/repo)
         branch: Working branch
         new_branch: Branch name for create/delete
@@ -111,7 +117,7 @@ async def tool_github_code(
         _is_admin: Admin flag - MUST be set by bot.py (default False = blocked)
 
     Returns:
-        Result dict with status and details
+        Result dict with status, details, and _ai_hint for follow-up guidance
     """
     # SECURITY: Admin check - code agent can modify repos
     # The _is_admin flag MUST be explicitly set True by the bot.py wrapper
@@ -130,32 +136,15 @@ async def tool_github_code(
         if action == "list_branches":
             return await _handle_list_branches(repo)
 
-        # Full workflow actions
-        if action == "plan":
-            return await _handle_plan(task, repo, branch)
-
+        # task action uses Claude Code
         if action == "task":
-            if interactive and discord_channel and discord_bot:
-                return await _handle_interactive_task(
-                    task=task,
-                    repo=repo,
-                    branch=branch,
-                    create_pr=create_pr,
-                    max_fix_attempts=max_fix_attempts,
-                    channel=discord_channel,
-                    bot=discord_bot,
-                    user_id=discord_user_id or 0,
-                    user_name=discord_user_name or "Unknown",
-                    human_review=human_review,
-                )
-            else:
-                return await _handle_task(
-                    task=task,
-                    repo=repo,
-                    branch=branch,
-                    create_pr=create_pr,
-                    max_fix_attempts=max_fix_attempts,
-                )
+            return await _handle_claude_code_task(
+                task=task,
+                repo=repo,
+                branch=branch,
+                channel=discord_channel,
+                user_name=discord_user_name or "Unknown",
+            )
 
         # Sandbox operations - work with existing sandbox
         if action == "run_in_sandbox":
@@ -195,7 +184,7 @@ async def tool_github_code(
         if action == "open_pr":
             return await _handle_open_pr(repo, branch, base_branch, pr_title, pr_body)
 
-        return {"error": f"Unknown action: {action}. Available: task, plan, status, run_in_sandbox, read_sandbox_file, write_sandbox_file, destroy_sandbox, list_branches, create_branch, delete_branch, read_file, list_files, edit_file, commit, push, open_pr"}
+        return {"error": f"Unknown action: {action}. Available: task, status, run_in_sandbox, read_sandbox_file, write_sandbox_file, destroy_sandbox, list_branches, create_branch, delete_branch, read_file, list_files, edit_file, commit, push, open_pr"}
 
     except Exception as e:
         logger.exception("Error in github_code tool")
@@ -343,228 +332,182 @@ async def _handle_destroy_sandbox(sandbox_id: Optional[str], user_name: Optional
     }
 
 
-async def _handle_plan(task: str, repo: str, branch: str) -> dict:
-    """Handle plan-only mode (no execution)."""
+async def _handle_claude_code_task(
+    task: str,
+    repo: str,
+    branch: str,
+    channel: Optional[discord.TextChannel] = None,
+    user_name: Optional[str] = None,
+) -> dict:
+    """
+    Handle task using Claude Code CLI (via ccr).
+
+    This is the NEW architecture:
+    - Creates sandbox with repo cloned
+    - Installs Claude Code + ccr
+    - Runs Claude Code with the task prompt
+    - Returns results with sandbox still running for follow-ups
+
+    The bot AI (Gemini) handles:
+    - Building task context
+    - Summarizing output for Discord
+    - Managing user interactions (pause, resume, etc.)
+    """
     if not task:
         return {"error": "Task description is required"}
 
-    agent = CodeAgent()
+    import uuid
+    task_id = str(uuid.uuid4())[:8]
+
+    # Track the task
+    _running_tasks[task_id] = {
+        "task": task,
+        "repo": repo,
+        "branch": branch,
+        "phase": "claude_code",
+        "started_at": datetime.utcnow(),
+        "messages": [],
+    }
+
+    # Create progress embed if Discord channel available
+    embed_manager: Optional[ProgressEmbedManager] = None
+    if channel:
+        embed_manager = ProgressEmbedManager(channel)
+        try:
+            await embed_manager.start(
+                title=f"Working on: {task[:50]}...",
+                description=f"Using Claude Code for `{repo}:{branch}`",
+                repo_url=f"https://github.com/{repo}",
+            )
+            embed_manager.add_step("Create sandbox")
+            embed_manager.add_step("Setup Claude Code")
+            embed_manager.add_step("Execute task")
+            embed_manager.add_step("Collect results")
+            await embed_manager.update()
+        except Exception as e:
+            logger.warning(f"Failed to create progress embed: {e}")
+            embed_manager = None
 
     try:
-        await agent.initialize()
-
-        # Just do understanding + planning phases
-        from ..sandbox import sandbox_manager
+        # Step 1: Create sandbox
+        if embed_manager:
+            embed_manager.start_step(0)
+            embed_manager.set_status("Creating sandbox environment...")
+            await embed_manager.update()
 
         sandbox = await sandbox_manager.create(
             repo_url=f"https://github.com/{repo}.git",
             branch=branch,
+            initiated_by=user_name,
+            initiated_source="discord" if channel else None,
         )
 
-        try:
-            # Generate repo map
-            repo_map = await agent._generate_repo_map(sandbox)
+        _running_tasks[task_id]["sandbox_id"] = sandbox.id
+        _running_tasks[task_id]["messages"].append(f"Sandbox {sandbox.id} created")
 
-            # Create state for planning
-            from ..agent import AgentState
-            state = AgentState(
-                task=task,
-                repo=repo,
-                branch=branch,
-                repo_map=repo_map,
-            )
+        if embed_manager:
+            embed_manager.complete_step(0, f"Sandbox {sandbox.id}")
+            embed_manager.start_step(1)
+            embed_manager.set_status("Installing Claude Code and ccr...")
+            await embed_manager.update()
 
-            # Generate plan
-            plan = await agent._create_plan(state)
+        # Step 2-3: Run Claude Code via the agent
+        agent = get_claude_code_agent()
 
-            return {
-                "success": True,
-                "task": task,
-                "repo": repo,
-                "branch": branch,
-                "plan": plan,
-                "message": f"**Implementation Plan for:** {task}\n\n{plan}"
-            }
-
-        finally:
-            await sandbox_manager.destroy(sandbox.id)
-
-    except Exception as e:
-        return {"error": f"Planning failed: {e}"}
-
-    finally:
-        await agent.close()
-
-
-async def _handle_task(
-    task: str,
-    repo: str,
-    branch: str,
-    create_pr: bool,
-    max_fix_attempts: int,
-) -> dict:
-    """Handle full task execution."""
-    if not task:
-        return {"error": "Task description is required"}
-
-    # Generate task ID
-    import uuid
-    task_id = str(uuid.uuid4())[:8]
-
-    # Track the task
-    _running_tasks[task_id] = {
-        "task": task,
-        "repo": repo,
-        "branch": branch,
-        "phase": "starting",
-        "started_at": datetime.utcnow(),
-        "messages": [],
-    }
-
-    try:
-        # Run the agent
-        result = await code_agent.run(
-            task=task,
-            repo=repo,
-            branch=branch,
-            create_pr=create_pr,
-            max_fix_attempts=max_fix_attempts,
-            require_plan_approval=True,
-            require_code_approval=True,
-        )
-
-        # Update tracking
-        _running_tasks[task_id]["phase"] = result.phase.value
-        _running_tasks[task_id]["messages"] = result.messages
-
-        # Format response
-        return _format_result(result, task_id)
-
-    except Exception as e:
-        _running_tasks[task_id]["phase"] = "failed"
-        _running_tasks[task_id]["messages"].append(f"Error: {e}")
-        return {"error": str(e), "task_id": task_id}
-
-    finally:
-        # Clean up after a delay
-        asyncio.create_task(_cleanup_task(task_id, delay=300))
-
-
-async def _handle_interactive_task(
-    task: str,
-    repo: str,
-    branch: str,
-    create_pr: bool,
-    max_fix_attempts: int,
-    channel: discord.TextChannel,
-    bot: discord.Client,
-    user_id: int,
-    user_name: str,
-    human_review: bool = True,
-) -> dict:
-    """
-    Handle task with interactive Discord updates and human-in-the-loop.
-
-    This provides live progress updates in Discord and allows users
-    to reply to messages to provide feedback at review checkpoints.
-    """
-    if not task:
-        return {"error": "Task description is required"}
-
-    import uuid
-    task_id = str(uuid.uuid4())[:8]
-
-    # Create progress reporter - silent by default, AI handles all messaging
-    reporter = DiscordProgressReporter(
-        channel=channel,
-        bot=bot,
-        user_id=user_id,
-        user_name=user_name,
-        notification_mode="silent",  # AI in control - no auto messages
-    )
-
-    # Register for reply routing
-    register_reporter(channel.id, reporter)
-    _interactive_sessions[channel.id] = {
-        "task_id": task_id,
-        "reporter": reporter,
-        "started_at": datetime.utcnow(),
-    }
-
-    # Track the task
-    _running_tasks[task_id] = {
-        "task": task,
-        "repo": repo,
-        "branch": branch,
-        "phase": "starting",
-        "started_at": datetime.utcnow(),
-        "messages": [],
-        "interactive": True,
-        "channel_id": channel.id,
-    }
-
-    try:
-        # Don't send initial message - AI will communicate results
-
-        # Define progress callback - just track internally, no Discord messages
-        async def on_progress(phase: str, message: str, detail: Optional[str] = None):
-            """Called by agent on progress updates - tracks internally only."""
-            _running_tasks[task_id]["phase"] = phase
+        # Progress callback for the agent
+        async def on_progress(message: str):
             _running_tasks[task_id]["messages"].append(message)
-            # No Discord messages - AI will handle all communication
+            if embed_manager:
+                # Parse message for step updates
+                if "setup" in message.lower() or "install" in message.lower():
+                    embed_manager.set_status(message)
+                elif "starting" in message.lower():
+                    embed_manager.complete_step(1)
+                    embed_manager.start_step(2)
+                    embed_manager.set_status(message)
+                elif "completed" in message.lower():
+                    embed_manager.complete_step(2)
+                    embed_manager.start_step(3)
+                else:
+                    embed_manager.set_status(message)
+                await embed_manager.update()
 
-        # Define approval callback for human review
-        async def on_approval_needed(phase: str, content: str) -> tuple[str, str]:
-            """Called by agent when human approval is needed."""
-            feedback = await reporter.request_approval(
-                phase=phase,
-                content=content,
-                timeout=300.0,  # 5 minute timeout
-            )
-
-            if feedback.type == HumanFeedbackType.APPROVE:
-                return ("approve", "")
-            elif feedback.type == HumanFeedbackType.REJECT:
-                return ("reject", feedback.message)
-            elif feedback.type == HumanFeedbackType.CANCEL:
-                return ("reject", "Cancelled by user")
-            else:
-                # MODIFY - return the feedback message for revision
-                return ("modify", feedback.message)
-
-        # Run the agent with callbacks
-        result = await code_agent.run(
-            task=task,
-            repo=repo,
-            branch=branch,
-            create_pr=create_pr,
-            max_fix_attempts=max_fix_attempts,
-            require_plan_approval=True,
-            require_code_approval=True,
+        result: ClaudeCodeResult = await agent.run_task(
+            sandbox_id=sandbox.id,
+            prompt=task,
             on_progress=on_progress,
-            on_approval_needed=on_approval_needed,
-            use_human_review=human_review,
         )
 
+        # Step 4: Collect results
+        if embed_manager:
+            embed_manager.complete_step(3)
+            if result.success:
+                embed_manager.set_status(f"Completed! {len(result.files_changed)} files changed")
+            else:
+                embed_manager.set_status(f"Error: {result.error or 'Unknown error'}")
+            await embed_manager.finish(success=result.success)
+
         # Update tracking
-        _running_tasks[task_id]["phase"] = result.phase.value
-        _running_tasks[task_id]["messages"] = result.messages
+        _running_tasks[task_id]["phase"] = "complete" if result.success else "failed"
+        _running_tasks[task_id]["messages"].append(f"Duration: {result.duration_seconds}s")
 
-        # Don't send completion message here - let AI handle the response
-        # The tool result goes back to AI which decides how to respond to user
+        # Summarize output for AI to present
+        summary = await output_summarizer.summarize_with_ai(
+            result.output,
+            task_context=task,
+            max_length=200
+        )
 
-        return _format_result(result, task_id)
+        return {
+            "success": result.success,
+            "task_id": task_id,
+            "sandbox_id": sandbox.id,
+            "task": task,
+            "repo": repo,
+            "branch": branch,
+            "summary": summary,
+            "files_changed": result.files_changed,
+            "commits_made": result.commits_made,
+            "pr_url": result.pr_url,
+            "output_preview": result.output[-1000:] if result.output else "",
+            "duration": result.duration_seconds,
+            "error": result.error,
+            # Hint for AI - guide Gemini to make smart decisions
+            "_ai_hint": (
+                "SANDBOX ACTIVE: You can send follow-up tasks to Claude Code via this sandbox. "
+                "Claude Code runs in a full Linux environment and can execute ANY commands (tests, builds, linting, etc). "
+                "\n\nYOU DECIDE what to do next based on context - there are NO predefined steps. Consider: "
+                "\n- Did the task complete successfully? Summarize changes for the user. "
+                "\n- Should tests be run? Only if relevant to changes or user requested. "
+                "\n- Is user input needed? ASK if: multiple valid approaches exist, changes are significant, or you're unsure about direction. "
+                "\n- Ready for PR? Offer to create one if changes look good. "
+                "\n- More work needed? You can send another prompt to Claude Code. "
+                "\n\nActions available: run_in_sandbox (any command), read_sandbox_file, write_sandbox_file, open_pr, destroy_sandbox. "
+                "Use your judgment - engage users when their input adds value, not for every decision."
+            )
+        }
 
     except Exception as e:
         _running_tasks[task_id]["phase"] = "failed"
         _running_tasks[task_id]["messages"].append(f"Error: {e}")
-        # Return error to AI - let AI explain it to user naturally
-        return {"error": str(e), "task_id": task_id}
+        logger.exception("Claude Code task failed")
+
+        if embed_manager:
+            embed_manager.set_status(f"Error: {e}")
+            await embed_manager.finish(success=False)
+
+        return {
+            "error": str(e),
+            "task_id": task_id,
+            "_ai_hint": (
+                "Task failed. Consider: "
+                "\n- Was it a temporary issue? You could retry with the same or modified prompt. "
+                "\n- Need more context? Ask the user for clarification. "
+                "\n- Is the error clear? Explain what went wrong and ask how to proceed."
+            )
+        }
 
     finally:
-        # Clean up
-        unregister_reporter(channel.id)
-        _interactive_sessions.pop(channel.id, None)
         asyncio.create_task(_cleanup_task(task_id, delay=300))
 
 
@@ -860,53 +803,10 @@ async def _handle_open_pr(
         return {"error": f"Failed to create PR: {data.get('message', status)}"}
 
 
-def _format_result_summary(result: AgentResult) -> str:
-    """Format a summary for Discord completion message."""
-    if result.success:
-        parts = [f"**Task:** {result.task[:100]}"]
-
-        if result.changes:
-            successful = [c for c in result.changes if c.get('success')]
-            parts.append(f"**Files Changed:** {len(successful)}")
-
-        if result.commit_sha:
-            parts.append(f"**Commit:** `{result.commit_sha}`")
-
-        if result.pr_url:
-            parts.append(f"**PR:** [View](<{result.pr_url}>)")
-
-        parts.append(f"**Duration:** {result.duration:.1f}s")
-        return "\n".join(parts)
-    else:
-        return f"**Error:** {result.error or 'Unknown error'}"
-
-
 async def _cleanup_task(task_id: str, delay: int):
     """Clean up task tracking after delay."""
     await asyncio.sleep(delay)
     _running_tasks.pop(task_id, None)
-
-
-def _format_result(result: AgentResult, task_id: str) -> dict:
-    """Format agent result - AI will use this to respond to user."""
-    # Return raw data - let AI format the response naturally
-    return {
-        "success": result.success,
-        "task_id": task_id,
-        "sandbox_id": result.sandbox_id,  # Sandbox persists - AI should ask user about next steps
-        "task": result.task,
-        "repo": result.repo,
-        "branch": result.branch,
-        "phase": result.phase.value,
-        "duration": result.duration,
-        "changes": result.changes,
-        "commit_sha": result.commit_sha,
-        "pr_url": result.pr_url,
-        "error": result.error,
-        "messages": result.messages[-5:] if result.messages else [],
-        # Hint for AI - sandbox is alive, ask user what to do next
-        "_ai_hint": "Sandbox is still running. Ask user: want to create a branch/PR, make more changes, or destroy the sandbox?"
-    }
 
 
 # Export tool handler

@@ -66,3 +66,6 @@ build/
 *.egg-info/
 
 # Test auto-deploy
+
+# Dev tracking docs
+TRACKING.md

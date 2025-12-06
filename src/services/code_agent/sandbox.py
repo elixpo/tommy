@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SandboxConfig:
     """Configuration for a sandbox."""
-    image: str = "python:3.11-slim"
+    image: str = "node:20-slim"  # Node.js for Claude Code + ccr
     memory_limit: str = "2g"
     cpu_limit: float = 2.0
     timeout: int = 300  # 5 minutes default
-    network_enabled: bool = True  # For pip install etc
+    network_enabled: bool = True  # For npm install etc
 
 
 @dataclass
