@@ -688,15 +688,21 @@ async def process_message(
                     await archive_thread(channel)
                     return
 
-        # Send response
+        # Send response - if empty, ask AI to generate a proper response
+        if not response_text:
+            # AI returned empty - ask it to respond properly
+            retry_result = await pollinations_client.chat_with_tools(
+                messages=[
+                    {"role": "system", "content": "You are Polly. The user sent a message but you didn't respond. Generate a helpful response - ask clarifying questions if you're unsure what they want, or summarize what you found if you used tools."},
+                    {"role": "user", "content": user_message}
+                ],
+                tools=[],  # No tools, just respond
+                discord_username=message.author.name
+            )
+            response_text = retry_result.get("response", "")
+
         if response_text:
             await send_long_message(channel, response_text, reply_to=reply_to)
-        else:
-            fallback_msg = "I processed your request but have nothing to say. Try asking differently?"
-            if reply_to:
-                await reply_to.reply(fallback_msg)
-            else:
-                await channel.send(fallback_msg)
 
     finally:
         # Restore original handlers
