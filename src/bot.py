@@ -551,6 +551,7 @@ async def process_message(
     """
     # Check if user is admin (has admin role)
     user_is_admin = is_admin(user)
+    logger.info(f"process_message: user={user}, user_is_admin={user_is_admin}")
 
     # Store original handlers
     original_handlers = {
