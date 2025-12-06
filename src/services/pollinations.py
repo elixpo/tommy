@@ -654,7 +654,7 @@ pollinations_client = PollinationsClient()
 
 # Perplexity models available via Pollinations
 PERPLEXITY_MODELS = {
-    "fast": "perplexity",  # Fast, simple lookups
+    "fast": "perplexity-fast",  # Fast, simple lookups
     "reasoning": "perplexity-reasoning",  # Complex analysis
 }
 
