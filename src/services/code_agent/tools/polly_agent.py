@@ -34,7 +34,6 @@ import discord
 from ..sandbox import sandbox_manager, Sandbox
 from ..claude_code_agent import get_claude_code_agent, ClaudeCodeResult, parse_todos_from_output, TodoItem
 from ..embed_builder import ProgressEmbedManager, StepStatus
-from ..output_summarizer import output_summarizer
 
 logger = logging.getLogger(__name__)
 
@@ -486,16 +485,11 @@ async def _handle_code_task(
         _running_tasks[task_id]["phase"] = "complete" if result.success else "failed"
         _running_tasks[task_id]["messages"].append(f"Duration: {result.duration_seconds}s")
 
-        # Summarize output for AI to present
-        summary = await output_summarizer.summarize_with_ai(
-            result.output,
-            task_context=task,
-            max_length=200
-        )
-
         # Include todos in response
         todos_summary = [{"content": t.content, "status": t.status} for t in result.todos]
 
+        # Return FULL ccr output - let bot AI read it and decide what to do
+        # This enables dynamic conversation: AI can reply to ccr, ask user, or mark done
         return {
             "success": result.success,
             "task_id": task_id,
@@ -503,26 +497,21 @@ async def _handle_code_task(
             "task": task,
             "repo": repo,
             "branch": branch,
-            "summary": summary,
+            "ccr_response": result.output,  # FULL ccr output - AI reads this and decides
             "files_changed": result.files_changed,
             "commits_made": result.commits_made,
             "pr_url": result.pr_url,
             "todos": todos_summary,
-            "output_preview": result.output[-1000:] if result.output else "",
             "duration": result.duration_seconds,
             "error": result.error,
-            # Hint for AI - guide Gemini to make smart decisions
             "_ai_hint": (
-                "SANDBOX ACTIVE: You can send follow-up tasks via this sandbox. "
-                "The sandbox runs in a full Linux environment and can execute ANY commands (tests, builds, linting, etc). "
-                "\n\nYOU DECIDE what to do next based on context - there are NO predefined steps. Consider: "
-                "\n- Did the task complete successfully? Summarize changes for the user. "
-                "\n- Should tests be run? Only if relevant to changes or user requested. "
-                "\n- Is user input needed? ASK if: multiple valid approaches exist, changes are significant, or you're unsure about direction. "
-                "\n- Ready for PR? Offer to create one if changes look good. "
-                "\n- More work needed? You can send another task prompt. "
-                "\n\nActions available: run_in_sandbox (any command), read_sandbox_file, write_sandbox_file, open_pr, destroy_sandbox. "
-                "Use your judgment - engage users when their input adds value, not for every decision."
+                "READ ccr_response carefully - it's the agent's full output. "
+                "YOU DECIDE what to do next: "
+                "\n- If ccr asks for info: provide it via another task call with more context"
+                "\n- If ccr completed work: summarize for user, offer to create PR"
+                "\n- If ccr has questions: ask user in Discord, then relay answer to ccr"
+                "\n- If something failed: explain and offer alternatives"
+                "\n\nSandbox is ACTIVE. You can: run_in_sandbox, read/write_sandbox_file, open_pr, destroy_sandbox."
             )
         }
 
