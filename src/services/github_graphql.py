@@ -9,6 +9,7 @@ GraphQL advantages over REST:
 Supports both GitHub App (for org repos) and PAT authentication.
 """
 
+import asyncio
 import logging
 import time
 from typing import Optional, Any

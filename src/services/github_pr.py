@@ -8,6 +8,7 @@ Provides comprehensive PR management:
 Uses GraphQL for most operations, REST API where necessary.
 """
 
+import asyncio
 import logging
 import re
 import aiohttp
