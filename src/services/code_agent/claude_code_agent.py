@@ -366,7 +366,8 @@ chmod 666 /tmp/claude-code-reference-count.txt
         # -p: print mode (non-interactive, required for automation)
         # --dangerously-skip-permissions: auto-accept tool usage (safe in sandbox)
         # Run as 'coder' user (not root) because --dangerously-skip-permissions requires non-root
-        cmd = f"su - coder -c \"cd /workspace && ccr code -p --dangerously-skip-permissions '{escaped_prompt}'\" 2>&1"
+        # Set ANTHROPIC_API_KEY to dummy value - ccr intercepts and routes to Pollinations
+        cmd = f"su - coder -c \"cd /workspace && ANTHROPIC_API_KEY=dummy ccr code -p --dangerously-skip-permissions '{escaped_prompt}'\" 2>&1"
 
         logger.info(f"Running Claude Code in sandbox {sandbox_id}: {prompt[:100]}...")
 
