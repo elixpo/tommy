@@ -534,12 +534,13 @@ async def _handle_code_task(
             "duration": result.duration_seconds,
             "error": result.error,
             "_ai_hint": (
-                "READ ccr_response carefully - it's the agent's full output. "
-                "YOU DECIDE what to do next: "
+                "IMPORTANT: Your response MUST be based on ccr_response above - this is what the coding agent ACTUALLY did. "
+                "DO NOT say 'I cannot access' - you just DID access the repo via this tool! "
+                "\n\nREAD ccr_response and respond accordingly:"
+                "\n- If success + files_changed: Summarize WHAT ccr did (from ccr_response), offer to create PR"
                 "\n- If ccr asks for info: provide it via another task call with more context"
-                "\n- If ccr completed work: summarize for user, offer to create PR"
                 "\n- If ccr has questions: ask user in Discord, then relay answer to ccr"
-                "\n- If something failed: explain and offer alternatives"
+                "\n- If error: explain the ACTUAL error from ccr_response"
                 "\n\nUse task_id for follow-up operations like open_pr, update_embed, etc."
             )
         }
