@@ -1097,6 +1097,9 @@ async def _handle_push(
     ccr works in the Docker sandbox - changes are committed there.
     This function pushes those commits to GitHub using the App's installation token.
 
+    If there are uncommitted changes in the sandbox, they are automatically
+    committed before pushing to ensure all work is included.
+
     Branch naming:
     - If branch_type is provided, renames task/* branch to proper name (e.g., feat/*, fix/*)
     - This rename happens locally before push, so GitHub sees the proper branch name
@@ -1113,6 +1116,51 @@ async def _handle_push(
     actual_branch = branch
     if task_id and task_id in _running_tasks:
         actual_branch = _running_tasks[task_id].get("branch_name", branch)
+
+    # Ensure we're on the correct branch before checking for changes
+    checkout_result = await sandbox.execute(
+        f"cd /workspace/pollinations && git checkout {actual_branch}",
+        as_coder=True
+    )
+    if checkout_result.exit_code != 0:
+        logger.warning(f"Could not checkout branch {actual_branch}: {checkout_result.stderr}")
+
+    # CRITICAL: Check for uncommitted changes and commit them before push
+    # This handles the case where ccr edited files but didn't commit
+    status_result = await sandbox.execute(
+        "cd /workspace/pollinations && git status --porcelain",
+        as_coder=True
+    )
+    uncommitted_files = [line[3:] for line in status_result.stdout.strip().split('\n') if line.strip()]
+
+    if uncommitted_files:
+        logger.info(f"Found {len(uncommitted_files)} uncommitted files, committing before push...")
+
+        # Stage all changes
+        await sandbox.execute(
+            "cd /workspace/pollinations && git add -A",
+            as_coder=True
+        )
+
+        # Get task description for commit message
+        task_desc = "Update files"
+        if task_id and task_id in _running_tasks:
+            task_desc = _running_tasks[task_id].get("task", "Update files")[:50]
+
+        # Commit the changes
+        commit_msg = f"{task_desc}"
+        commit_result = await sandbox.execute(
+            f"cd /workspace/pollinations && git commit -m '{commit_msg}'",
+            as_coder=True
+        )
+
+        if commit_result.exit_code != 0:
+            logger.warning(f"Commit before push failed: {commit_result.stderr}")
+            uncommitted_files = []  # Reset if commit failed
+        else:
+            logger.info(f"Committed {len(uncommitted_files)} files before push")
+    else:
+        uncommitted_files = []  # No uncommitted files
 
     # Generate proper branch name if type provided
     target_branch = actual_branch
@@ -1143,11 +1191,17 @@ async def _handle_push(
     push_result = await sandbox.push_branch(target_branch, repo)
 
     if push_result.exit_code == 0:
+        # Build success message
+        msg = f"✅ Pushed branch `{target_branch}` to GitHub"
+        if uncommitted_files:
+            msg += f" (auto-committed {len(uncommitted_files)} file(s))"
+
         return {
             "success": True,
             "branch": target_branch,
             "original_branch": actual_branch if actual_branch != target_branch else None,
-            "message": f"✅ Pushed branch `{target_branch}` to GitHub"
+            "files_committed": uncommitted_files if uncommitted_files else None,
+            "message": msg
         }
     else:
         error_msg = push_result.stderr or push_result.stdout
