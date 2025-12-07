@@ -428,6 +428,8 @@ class PersistentSandbox:
 
             if "true" in status_result.stdout.lower():
                 logger.info(f"Sandbox {CONTAINER_NAME} already running")
+                # Always ensure ccr is running (it may have died)
+                await self._ensure_ccr_running()
                 return True
             else:
                 # Start stopped container
