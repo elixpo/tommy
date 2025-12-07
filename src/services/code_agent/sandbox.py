@@ -1184,6 +1184,9 @@ echo "password=$GH_TOKEN"
         """
         Push a branch to GitHub using the configured App credentials.
 
+        Uses the GitHub App installation token directly in the push URL
+        to avoid credential helper issues in Docker.
+
         Args:
             branch_name: Name of the branch to push
             repo: Repository in owner/repo format
@@ -1191,23 +1194,52 @@ echo "password=$GH_TOKEN"
         Returns:
             CommandResult with push output
         """
-        # Refresh credentials before push (ensures valid token)
-        creds_ok = await self.refresh_github_token(repo)
-        if not creds_ok:
+        from ..github_auth import github_app_auth
+
+        if not github_app_auth:
             return CommandResult(
                 exit_code=1,
                 stdout="",
-                stderr="Failed to configure GitHub credentials"
+                stderr="GitHub App auth not configured. Cannot push."
             )
 
-        # Push the branch
-        result = await self.execute(
-            f"cd /workspace/pollinations && git push -u origin {branch_name}",
-            as_coder=True,
-            timeout=120
-        )
+        try:
+            # Get a fresh token
+            token = await github_app_auth.get_token()
+            if not token:
+                return CommandResult(
+                    exit_code=1,
+                    stdout="",
+                    stderr="Failed to get GitHub App token"
+                )
 
-        return result
+            # Push using token directly in URL (most reliable method in Docker)
+            # x-access-token is the standard username for GitHub App installation tokens
+            push_url = f"https://x-access-token:{token}@github.com/{repo}.git"
+
+            # Use git push with explicit URL (doesn't persist token in git config)
+            result = await self.execute(
+                f"cd /workspace/pollinations && git push {push_url} {branch_name}:{branch_name}",
+                as_coder=True,
+                timeout=120
+            )
+
+            # If push succeeded, also set upstream tracking (without token in URL)
+            if result.exit_code == 0:
+                await self.execute(
+                    f"cd /workspace/pollinations && git branch --set-upstream-to=origin/{branch_name} {branch_name}",
+                    as_coder=True
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error pushing branch: {e}")
+            return CommandResult(
+                exit_code=1,
+                stdout="",
+                stderr=str(e)
+            )
 
 
 # =============================================================================

@@ -102,8 +102,20 @@ async def fetch_thread_history(thread: discord.Thread, limit: int = THREAD_HISTO
     """
     Fetch message history from a thread and format for AI context.
     This is our "memory" - pulled fresh from Discord each time.
+
+    Also includes existing task state if there's an active coding task for this thread.
     """
     messages = []
+
+    # Check for existing task state - this is CRITICAL for follow-up commands
+    # Without this, the AI doesn't know what polly_agent already did in this thread
+    task_context = _get_task_context_for_thread(str(thread.id))
+    if task_context:
+        messages.append({
+            "role": "system",
+            "content": task_context
+        })
+
     try:
         async for msg in thread.history(limit=limit, oldest_first=True):
             if msg.author.bot:
@@ -119,6 +131,62 @@ async def fetch_thread_history(thread: discord.Thread, limit: int = THREAD_HISTO
     except Exception as e:
         logger.warning(f"Failed to fetch thread history: {e}")
     return messages
+
+
+def _get_task_context_for_thread(thread_id: str) -> str | None:
+    """
+    Get existing task context for a thread to help AI understand what's already been done.
+
+    This prevents the AI from calling polly_agent(action="task") again when the user
+    asks to "open a branch" or "push changes" - instead it knows to use push/open_pr.
+    """
+    from .services.code_agent.tools.polly_agent import _running_tasks
+
+    task = _running_tasks.get(thread_id)
+    if not task:
+        return None
+
+    branch_name = task.get("branch_name")
+    files_changed = task.get("files_changed", [])
+    phase = task.get("phase", "unknown")
+    original_task = task.get("task", "")[:200]
+
+    if not branch_name:
+        return None
+
+    # Build context message for AI
+    context_parts = [
+        "## EXISTING TASK STATE (polly_agent already ran in this thread)",
+        f"- **Branch**: `{branch_name}` (changes already committed locally)",
+        f"- **Phase**: {phase}",
+        f"- **Original task**: {original_task}",
+    ]
+
+    if files_changed:
+        files_list = ", ".join(files_changed[:10])
+        if len(files_changed) > 10:
+            files_list += f" (+{len(files_changed) - 10} more)"
+        context_parts.append(f"- **Files changed**: {files_list}")
+
+    context_parts.extend([
+        "",
+        "⚠️ **IMPORTANT**: Do NOT call polly_agent(action='task') again for follow-up commands!",
+        "",
+        "**For push (just push branch to GitHub):**",
+        "- polly_agent(action='push', branch_type='feat|fix|docs', branch_description='short-description')",
+        "- branch_type + branch_description gives proper names like feat/add-dark-mode",
+        "",
+        "**For PR (push + create pull request):**",
+        "- polly_agent(action='open_pr', pr_title='Concise title', pr_body='Detailed summary of changes', branch_type='feat', branch_description='short-name')",
+        "- pr_title: Brief but descriptive (e.g., 'Add dark mode toggle to settings')",
+        "- pr_body: Include what was changed, why, and any testing done",
+        "",
+        "**For more changes:**",
+        "- polly_agent(action='task', task='additional changes needed...')",
+        "- Same branch is reused automatically via thread_id"
+    ])
+
+    return "\n".join(context_parts)
 
 
 class PollyBot(commands.Bot):

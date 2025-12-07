@@ -1092,12 +1092,10 @@ async def _handle_push(
     branch_description: Optional[str] = None
 ) -> dict:
     """
-    Push the sandbox branch to GitHub using GitHub App (Polly Bot) credentials.
+    Push the sandbox branch to GitHub using GitHub App credentials.
 
     ccr works in the Docker sandbox - changes are committed there.
-    This function pushes those commits to GitHub using the App's credentials.
-
-    The push shows as "Polly Bot" and uses secure App token authentication.
+    This function pushes those commits to GitHub using the App's installation token.
 
     Branch naming:
     - If branch_type is provided, renames task/* branch to proper name (e.g., feat/*, fix/*)
@@ -1149,15 +1147,15 @@ async def _handle_push(
             "success": True,
             "branch": target_branch,
             "original_branch": actual_branch if actual_branch != target_branch else None,
-            "message": f"✅ Pushed branch `{target_branch}` to GitHub (via Polly Bot)"
+            "message": f"✅ Pushed branch `{target_branch}` to GitHub"
         }
     else:
         error_msg = push_result.stderr or push_result.stdout
         # Check for common errors
         if "rejected" in error_msg.lower():
             return {"error": f"Push rejected - branch may have diverged. Error: {error_msg[:200]}"}
-        if "credential" in error_msg.lower() or "authentication" in error_msg.lower():
-            return {"error": f"GitHub authentication failed. Check if Polly Bot is installed on the repo. Error: {error_msg[:200]}"}
+        if "credential" in error_msg.lower() or "authentication" in error_msg.lower() or "invalid username" in error_msg.lower():
+            return {"error": f"GitHub authentication failed. Check GitHub App installation. Error: {error_msg[:200]}"}
         return {"error": f"Failed to push: {error_msg[:300]}"}
 
 

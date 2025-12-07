@@ -882,12 +882,17 @@ If ccr_response says it needs more information:
 - Without task_id: creates NEW branch, loses context, wastes resources
 
 Example flow:
-1. User: "update the readme" → polly_agent(action="task", task="...") → returns task_id="abc123"
-2. User: "now create a branch for it" → polly_agent(action="task", task="...", task_id="abc123") ← PASSES task_id!
-3. User: "push it" → polly_agent(action="push", task_id="abc123") ← PASSES task_id!
+1. User: "update the readme" → polly_agent(action="task", task="...") → ccr makes changes on local branch
+2. User: "now push it" → polly_agent(action="push") ← thread_id auto-injected, reuses same branch!
+3. User: "open a PR" → polly_agent(action="open_pr", pr_title="...", pr_body="...")
 
-❌ WRONG: Calling action="task" without task_id on follow-ups (creates duplicate branches)
-✅ RIGHT: Always include task_id from previous response for follow-up calls
+⚠️ "open a branch" or "create a branch" usually means PUSH existing changes (not action="task"):
+- Changes are ALREADY on a local branch (thread/123456)
+- User wants to push to GitHub → use action="push"
+- If user wants PR → use action="open_pr"
+
+❌ WRONG: Calling action="task" again when user says "open a branch" (re-runs the whole task!)
+✅ RIGHT: Use action="push" or action="open_pr" for follow-up git operations
 
 **You DO have code modification ability via polly_agent.** The changes are REAL!
 
