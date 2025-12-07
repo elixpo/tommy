@@ -823,8 +823,9 @@ Only ask when info truly doesn't exist.
 
 **3. WHEN TO USE POLLY_AGENT vs OTHER TOOLS:**
 ✅ USE polly_agent: "implement this feature", "write code to fix X", "create a branch", "commit changes", "open a PR"
-❌ DON'T use polly_agent: "summarize changes", "what changed recently", "search for X", "show me the code", "list commits"
-For summaries/searches/lookups → Use github_custom, github_issue, github_pr, code_search instead.
+✅ ALSO USE polly_agent: Follow-up questions about work IT just did (e.g., "summarize your changes" after coding task)
+❌ DON'T use polly_agent for NEW/UNRELATED lookups: "what changed in repo last week", "search for auth code", "show commits"
+Use judgment: If user is asking about polly_agent's OWN recent work → use polly_agent(status). If asking about repo in general → use github_custom/code_search.
 
 **4. POLLY_AGENT DYNAMIC WORKFLOW (when you DO use it):**
 After polly_agent returns, READ ccr_response carefully and decide:
