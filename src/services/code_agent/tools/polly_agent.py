@@ -45,6 +45,9 @@ TASKS_FILE = SANDBOX_DIR / "tasks.json"
 # Store running tasks for status checks (loaded from disk on import)
 _running_tasks: dict[str, dict] = {}
 
+# NOTE: thread_to_task mapping removed - thread_id IS the task_id now
+# No mapping needed: thread_id = task_id = branch name = ccr session ID
+
 
 def _save_tasks():
     """Save tasks to disk for persistence across restarts."""
@@ -63,10 +66,15 @@ def _save_tasks():
                 "files_changed": task_data.get("files_changed", []),
                 "user": task_data.get("user"),
                 "channel_id": task_data.get("channel_id"),
+                "thread_id": task_data.get("thread_id"),
             }
 
+        # Simplified: just save tasks, no mapping needed
+        # thread_id IS the task_id now
+        save_data = {"tasks": serializable}
+
         TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TASKS_FILE.write_text(json.dumps(serializable, indent=2))
+        TASKS_FILE.write_text(json.dumps(save_data, indent=2))
         logger.debug(f"Saved {len(serializable)} tasks to {TASKS_FILE}")
     except Exception as e:
         logger.warning(f"Failed to save tasks: {e}")
@@ -77,7 +85,15 @@ def _load_tasks():
     global _running_tasks
     try:
         if TASKS_FILE.exists():
-            data = json.loads(TASKS_FILE.read_text())
+            raw_data = json.loads(TASKS_FILE.read_text())
+
+            # Handle both old format (flat tasks) and new format (tasks wrapper)
+            if "tasks" in raw_data:
+                data = raw_data["tasks"]
+            else:
+                # Old format - just tasks
+                data = raw_data
+
             for task_id, task_data in data.items():
                 # Convert ISO string back to datetime
                 if task_data.get("started_at"):
@@ -86,13 +102,20 @@ def _load_tasks():
                     except:
                         task_data["started_at"] = datetime.utcnow()
                 _running_tasks[task_id] = task_data
-            logger.info(f"Loaded {len(_running_tasks)} tasks from {TASKS_FILE}")
+
+            logger.info(f"Loaded {len(_running_tasks)} tasks")
     except Exception as e:
         logger.warning(f"Failed to load tasks: {e}")
 
 
 # Load tasks on module import
 _load_tasks()
+
+
+# NOTE: get_task_for_thread and set_task_for_thread removed
+# With thread_id as universal key, no mapping is needed:
+# - thread_id IS the task_id
+# - Just use str(thread_id) to look up in _running_tasks
 
 
 async def tool_polly_agent(
@@ -111,8 +134,12 @@ async def tool_polly_agent(
     pr_body: Optional[str] = None,
     base_branch: Optional[str] = None,  # For PRs
     pattern: Optional[str] = None,  # For list_files
+    # Branch naming for push/PR (converts task/* to proper names like feat/*, fix/*)
+    branch_type: Optional[str] = None,  # feat, fix, docs, refactor, chore, etc.
+    branch_description: Optional[str] = None,  # Short description for branch name
     # Discord context (injected by bot.py)
     discord_channel: Optional[discord.TextChannel] = None,
+    discord_thread_id: Optional[int] = None,  # Thread ID for automatic task_id lookup
     discord_user_name: Optional[str] = None,
     # Admin flag - MUST be explicitly set by bot.py wrapper
     _is_admin: bool = False,
@@ -180,6 +207,12 @@ async def tool_polly_agent(
             "error": "Code agent requires admin permissions. This tool can modify repository code, create branches, and open PRs - ask a team member with admin access!"
         }
 
+    # SIMPLIFIED: thread_id IS the task_id now - no lookup needed!
+    # If we have a thread_id, that's our task_id
+    if discord_thread_id and not task_id:
+        task_id = str(discord_thread_id)
+        logger.info(f"Using thread_id as task_id: {task_id}")
+
     try:
         # Status check (no sandbox needed)
         if action == "status":
@@ -202,6 +235,7 @@ async def tool_polly_agent(
                 channel=discord_channel,
                 user_name=discord_user_name or "Unknown",
                 existing_task_id=task_id,  # Reuse existing branch if task_id provided
+                thread_id=discord_thread_id,  # For thread→task mapping
             )
 
         # Sandbox operations - work with existing sandbox
@@ -240,10 +274,10 @@ async def tool_polly_agent(
             return await _handle_commit(repo, branch, commit_message)
 
         if action == "push":
-            return await _handle_push(repo, branch, task_id)
+            return await _handle_push(repo, branch, task_id, branch_type, branch_description)
 
         if action == "open_pr":
-            return await _handle_open_pr(repo, branch, base_branch, pr_title, pr_body, task_id)
+            return await _handle_open_pr(repo, branch, base_branch, pr_title, pr_body, task_id, branch_type, branch_description)
 
         return {"error": f"Unknown action: {action}. Available: task, status, list_tasks, update_embed, run_in_sandbox, read_sandbox_file, write_sandbox_file, destroy_sandbox, list_branches, create_branch, delete_branch, read_file, list_files, edit_file, commit, push, open_pr"}
 
@@ -324,10 +358,13 @@ def _handle_list_tasks() -> dict:
         "message": "\n".join(message_lines),
         "tasks": tasks_list,
         "_ai_hint": (
-            "Use task_id from this list for operations like:\n"
-            "- polly_agent(action='open_pr', task_id='...', pr_title='...')\n"
-            "- polly_agent(action='push', task_id='...')\n"
-            "- polly_agent(action='status', task_id='...')"
+            "Task IDs are now Discord thread IDs - the universal key.\n"
+            "When user is in a thread, thread_id is auto-injected so you don't need task_id.\n\n"
+            "For PR/push from a thread (most common case):\n"
+            "- polly_agent(action='open_pr', pr_title='...', pr_body='...',\n"
+            "             branch_type='feat|fix|docs', branch_description='short-description')\n\n"
+            "IMPORTANT: When pushing or creating PRs, use branch_type and branch_description\n"
+            "to give branches proper names like feat/xyz, fix/abc instead of thread/12345."
         )
     }
 
@@ -483,7 +520,8 @@ async def _handle_code_task(
     branch: str,
     channel: Optional[discord.TextChannel] = None,
     user_name: Optional[str] = None,
-    existing_task_id: Optional[str] = None,
+    existing_task_id: Optional[str] = None,  # Legacy - kept for compatibility
+    thread_id: Optional[int] = None,  # Discord thread ID - THE universal key
 ) -> dict:
     """
     Handle coding task via ccr.
@@ -499,28 +537,30 @@ async def _handle_code_task(
     - Summarizing output for Discord
     - Managing user interactions (pause, resume, etc.)
 
-    Args:
-        existing_task_id: If provided, continue on that task's branch instead of creating new
+    Thread ID as Universal Key:
+    - thread_id = task_id = branch name = ccr session ID
+    - No mapping needed - if you have thread_id, you have everything
+    - Subsequent calls with same thread_id automatically continue on same branch
     """
     if not task:
         return {"error": "Task description is required"}
 
-    import uuid
-
-    # Check if we should continue an existing task
-    reusing_branch = False
-    if existing_task_id and existing_task_id in _running_tasks:
+    # SIMPLIFIED: Use thread_id as the universal key
+    # thread_id = task_id = branch = ccr session
+    if thread_id:
+        task_id = str(thread_id)
+    elif existing_task_id:
         task_id = existing_task_id
-        existing_branch = _running_tasks[task_id].get("branch_name")
-        if existing_branch:
-            branch = existing_branch
-            reusing_branch = True
-            logger.info(f"Continuing task {task_id} on existing branch {branch}")
     else:
+        # Fallback for non-Discord usage
+        import uuid
         task_id = str(uuid.uuid4())[:8]
 
+    # Check if task already exists (continuing work in same thread)
+    is_continuation = task_id in _running_tasks
+
     # Track the task (update if existing, create if new)
-    if task_id not in _running_tasks:
+    if not is_continuation:
         _running_tasks[task_id] = {
             "task": task,
             "repo": repo,
@@ -529,57 +569,45 @@ async def _handle_code_task(
             "started_at": datetime.utcnow(),
             "messages": [],
             "user": user_name,
+            "thread_id": thread_id,
         }
+        logger.info(f"New task {task_id} (thread_id={thread_id})")
     else:
         # Update existing task with new task description
         _running_tasks[task_id]["task"] = task
         _running_tasks[task_id]["phase"] = "coding"
         _running_tasks[task_id]["messages"].append(f"Continuing with: {task[:50]}...")
+        logger.info(f"Continuing task {task_id} (thread_id={thread_id})")
 
-    # Create progress embed if Discord channel available
+    # Create progress embed if Discord channel available (Claude Code style)
     embed_manager: Optional[ProgressEmbedManager] = None
     dynamic_todo_indices: dict[str, int] = {}  # Track todo content -> step index
     if channel:
         embed_manager = ProgressEmbedManager(channel)
         try:
-            await embed_manager.start(
-                title=f"Working on: {task[:50]}...",
-                description=f"Repository: `{repo}:{branch}`",
-                repo_url=f"https://github.com/{repo}",
-            )
-            # Initial setup steps
-            embed_manager.add_step("Setting up environment")
-            embed_manager.add_step("Running task")
+            await embed_manager.start(current_action="Setting up environment")
             await embed_manager.update()
         except Exception as e:
             logger.warning(f"Failed to create progress embed: {e}")
             embed_manager = None
 
     try:
-        # Setup step
-        if embed_manager:
-            embed_manager.start_step(0)
-            embed_manager.set_status("Setting up coding environment...")
-            await embed_manager.update()
-
         _running_tasks[task_id]["messages"].append(f"Task {task_id} starting")
 
         # Run task via the agent (agent handles branch creation internally)
         agent = get_claude_code_agent()
 
-        # Progress callback for the agent - dynamically updates todos
+        # Progress callback - Claude Code style updates
         async def on_progress(message: str):
             nonlocal dynamic_todo_indices
             _running_tasks[task_id]["messages"].append(message)
 
             if embed_manager:
-                # Check if setup is complete and task is starting
-                if "starting" in message.lower() or "🚀" in message:
-                    embed_manager.complete_step(0)  # Setup complete
-                    embed_manager.start_step(1)     # Task running
-                    embed_manager.set_status("Working on task...")
-                    await embed_manager.update()
-                    return
+                # Update current action from message
+                # Strip emojis and clean up for title
+                clean_msg = message.lstrip("🔧🚀⏳🔍💭⚙️📝✅⚠️❌ ").strip()
+                if clean_msg and len(clean_msg) > 3:
+                    embed_manager.set_action(clean_msg[:60])
 
                 # Try to parse todos from accumulated output
                 accumulated = "\n".join(_running_tasks[task_id]["messages"])
@@ -588,7 +616,7 @@ async def _handle_code_task(
                 # Update embed with parsed todos
                 for todo in todos:
                     if todo.content not in dynamic_todo_indices:
-                        # Add new todo step
+                        # Add new todo
                         idx = embed_manager.add_step(todo.content)
                         dynamic_todo_indices[todo.content] = idx
 
@@ -600,15 +628,20 @@ async def _handle_code_task(
                     elif todo.status == "failed":
                         embed_manager.fail_step(idx)
 
-                # Update status message
-                embed_manager.set_status(message[:100] if len(message) > 100 else message)
                 await embed_manager.update()
+
+        # Get Discord user ID from kwargs (injected by bot.py)
+        discord_user_id = kwargs.get("discord_user_id", 0)
+        discord_channel_id = channel.id if channel else 0
 
         result: ClaudeCodeResult = await agent.run_task(
             user_id=user_name or "unknown",
             prompt=task,
             task_description=task[:100],
             on_progress=on_progress,
+            thread_id=thread_id,  # Pass thread_id for universal key (branch + session)
+            discord_user_id=discord_user_id,  # For terminal ownership tracking
+            discord_channel_id=discord_channel_id,  # For stale terminal notifications
         )
 
         # Final embed update with all todos from result
@@ -627,17 +660,15 @@ async def _handle_code_task(
                 elif todo.status == "failed":
                     embed_manager.fail_step(idx)
 
+            # Final action message
             if result.success:
-                status_msg = f"ccr done - {len(result.files_changed)} file(s) changed"
-                if result.branch_name:
-                    status_msg += f" | branch: {result.branch_name}"
-                embed_manager.set_status(status_msg)
+                files_msg = f"{len(result.files_changed)} file(s) changed" if result.files_changed else "No changes"
+                embed_manager.set_action(files_msg)
             else:
-                embed_manager.set_status(f"ccr error: {result.error or 'Task failed'}")
+                embed_manager.set_action(result.error[:50] if result.error else "Task failed")
 
             await embed_manager.update()
-            # DON'T finish yet - keep embed live so bot AI can update it
-            # Store embed_manager for later updates
+            # Store embed_manager for later updates (e.g., when PR is created)
             _running_tasks[task_id]["embed_manager"] = embed_manager
 
         # Update tracking
@@ -676,10 +707,23 @@ async def _handle_code_task(
                 "2. ccr SUCCESS + no files → Report what ccr found/said FROM ccr_response\n"
                 "3. ccr NEEDS INFO → Use YOUR tools (code_search, github_issue) to get it, call polly_agent again\n"
                 "4. ccr ERROR → Explain the ACTUAL error FROM ccr_response\n\n"
-                "TASK IS NOT DONE until user confirms. Keep task_id for follow-ups.\n\n"
-                "TO CREATE PR (when user confirms):\n"
-                f"polly_agent(action='open_pr', task_id='{task_id}', pr_title='...', pr_body='...')\n"
-                "This will: 1) Push the branch to GitHub, 2) Create the PR automatically."
+                "TASK IS NOT DONE until user confirms.\n\n"
+                "🔑 SIMPLIFIED: Thread ID is the universal key!\n"
+                "- All follow-ups from this Discord thread AUTOMATICALLY use the same git branch\n"
+                "- No need to pass task_id - it's derived from thread_id automatically\n"
+                "- Git branch IS the state - all previous changes are committed and visible\n"
+                "- Terminal persists per thread - ccr keeps conversation context across calls!\n"
+                "- If ccr auto-compacts (long session), new session inherits context in same terminal\n\n"
+                "TO CREATE PR (when user confirms) - USE PROPER BRANCH NAMING:\n"
+                "polly_agent(action='open_pr', pr_title='...', pr_body='...',\n"
+                "           branch_type='feat|fix|docs|refactor|chore', branch_description='short-description')\n"
+                "Branch types: feat (new feature), fix (bug fix), docs (documentation),\n"
+                "              refactor (code refactor), chore (maintenance), test, style, perf, ci\n"
+                "Example: branch_type='feat', branch_description='add dark mode toggle'\n"
+                "         → creates branch: feat/add-dark-mode-toggle\n\n"
+                "TO CONTINUE WORK (follow-up task) - just call polly_agent again:\n"
+                "polly_agent(action='task', task='also add tests')\n"
+                "The thread_id is auto-injected, so ccr continues on the same branch with full context."
             )
         }
 
@@ -962,7 +1006,52 @@ async def _handle_commit(repo: str, branch: str, message: Optional[str]) -> dict
     }
 
 
-async def _handle_push(repo: str, branch: str, task_id: Optional[str] = None) -> dict:
+def _generate_branch_name(
+    branch_type: Optional[str],
+    branch_description: Optional[str],
+    task_id: Optional[str] = None
+) -> Optional[str]:
+    """
+    Generate a proper branch name from type and description.
+
+    Examples:
+        branch_type="feat", branch_description="add dark mode" -> "feat/add-dark-mode"
+        branch_type="fix", branch_description="null pointer bug" -> "fix/null-pointer-bug"
+
+    Returns None if branch_type is not provided (keeps original branch name).
+    """
+    if not branch_type:
+        return None
+
+    # Normalize type
+    valid_types = ["feat", "fix", "docs", "refactor", "chore", "test", "style", "perf", "ci"]
+    branch_type = branch_type.lower().strip()
+    if branch_type not in valid_types:
+        logger.warning(f"Unknown branch type '{branch_type}', using as-is")
+
+    # Generate description slug
+    if branch_description:
+        # Convert to slug: lowercase, replace spaces with dashes, remove special chars
+        import re
+        slug = branch_description.lower().strip()
+        slug = re.sub(r'[^a-z0-9\s-]', '', slug)  # Remove special chars
+        slug = re.sub(r'\s+', '-', slug)  # Spaces to dashes
+        slug = re.sub(r'-+', '-', slug)  # Multiple dashes to single
+        slug = slug.strip('-')[:50]  # Limit length
+    else:
+        # Use task_id if no description
+        slug = task_id or "update"
+
+    return f"{branch_type}/{slug}"
+
+
+async def _handle_push(
+    repo: str,
+    branch: str,
+    task_id: Optional[str] = None,
+    branch_type: Optional[str] = None,
+    branch_description: Optional[str] = None
+) -> dict:
     """
     Push the sandbox branch to GitHub using GitHub App (Polly Bot) credentials.
 
@@ -970,6 +1059,10 @@ async def _handle_push(repo: str, branch: str, task_id: Optional[str] = None) ->
     This function pushes those commits to GitHub using the App's credentials.
 
     The push shows as "Polly Bot" and uses secure App token authentication.
+
+    Branch naming:
+    - If branch_type is provided, renames task/* branch to proper name (e.g., feat/*, fix/*)
+    - This rename happens locally before push, so GitHub sees the proper branch name
     """
     from ..sandbox import get_persistent_sandbox
 
@@ -984,16 +1077,40 @@ async def _handle_push(repo: str, branch: str, task_id: Optional[str] = None) ->
     if task_id and task_id in _running_tasks:
         actual_branch = _running_tasks[task_id].get("branch_name", branch)
 
-    logger.info(f"Pushing branch {actual_branch} to origin using GitHub App...")
+    # Generate proper branch name if type provided
+    target_branch = actual_branch
+    proper_name = _generate_branch_name(branch_type, branch_description, task_id)
+
+    if proper_name and (actual_branch.startswith("task/") or actual_branch.startswith("thread/")):
+        # Rename branch locally before pushing (task/* or thread/* → feat/*, fix/*, etc.)
+        logger.info(f"Renaming branch {actual_branch} → {proper_name}")
+
+        rename_result = await sandbox.execute(
+            f"cd /workspace/pollinations && git branch -m {actual_branch} {proper_name}",
+            as_coder=True
+        )
+
+        if rename_result.exit_code == 0:
+            target_branch = proper_name
+            # Update task tracking with new branch name
+            if task_id and task_id in _running_tasks:
+                _running_tasks[task_id]["branch_name"] = proper_name
+                _save_tasks()
+            logger.info(f"Branch renamed to {proper_name}")
+        else:
+            logger.warning(f"Failed to rename branch: {rename_result.stderr}, using original name")
+
+    logger.info(f"Pushing branch {target_branch} to origin using GitHub App...")
 
     # Use the sandbox's push_branch method which handles App credentials
-    push_result = await sandbox.push_branch(actual_branch, repo)
+    push_result = await sandbox.push_branch(target_branch, repo)
 
     if push_result.exit_code == 0:
         return {
             "success": True,
-            "branch": actual_branch,
-            "message": f"✅ Pushed branch `{actual_branch}` to GitHub (via Polly Bot)"
+            "branch": target_branch,
+            "original_branch": actual_branch if actual_branch != target_branch else None,
+            "message": f"✅ Pushed branch `{target_branch}` to GitHub (via Polly Bot)"
         }
     else:
         error_msg = push_result.stderr or push_result.stdout
@@ -1011,13 +1128,19 @@ async def _handle_open_pr(
     base_branch: Optional[str],
     title: Optional[str],
     body: Optional[str],
-    task_id: Optional[str] = None
+    task_id: Optional[str] = None,
+    branch_type: Optional[str] = None,
+    branch_description: Optional[str] = None
 ) -> dict:
     """
     Create a pull request.
 
     This first pushes the sandbox branch to GitHub (if not already pushed),
     then creates the PR via GitHub API.
+
+    Branch naming:
+    - If branch_type provided, renames task/* to proper name before pushing
+    - Example: branch_type="feat", branch_description="dark mode" -> feat/dark-mode
     """
     if not title:
         return {"error": "pr_title parameter is required"}
@@ -1029,9 +1152,9 @@ async def _handle_open_pr(
     if task_id and task_id in _running_tasks:
         actual_branch = _running_tasks[task_id].get("branch_name", head_branch)
 
-    # First, push the branch to GitHub
+    # First, push the branch to GitHub (this handles renaming if branch_type provided)
     logger.info(f"Pushing branch {actual_branch} before creating PR...")
-    push_result = await _handle_push(repo, actual_branch, task_id)
+    push_result = await _handle_push(repo, actual_branch, task_id, branch_type, branch_description)
 
     if not push_result.get("success"):
         return {"error": f"Failed to push branch before PR: {push_result.get('error', 'Unknown error')}"}

@@ -6,130 +6,366 @@ Creates a single embed that updates in real-time with:
 - Checklist of steps (✅ 🔄 ⬜)
 - Current status message
 - Footer with elapsed time
+- Close Terminal button (for thread-based tasks)
 """
 
 import asyncio
 import discord
+from discord.ui import View, Button
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Callable, Awaitable
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
 
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# CLOSE TERMINAL BUTTON VIEW
+# =============================================================================
+
+# Type for the callback function
+CloseTerminalCallback = Callable[[str], Awaitable[bool]]
+
+
+class CloseTerminalView(View):
+    """
+    Discord View with a "Close Terminal" button.
+
+    Only the user who started the terminal (owner_user_id) can click the button.
+    This view is added to the final task completion embed when there are git changes.
+    """
+
+    def __init__(
+        self,
+        thread_id: str,
+        owner_user_id: int,
+        close_callback: CloseTerminalCallback,
+        timeout: Optional[float] = None,  # No timeout - button stays forever
+    ):
+        """
+        Args:
+            thread_id: Discord thread ID (the universal key)
+            owner_user_id: Discord user ID who started the terminal (only they can close it)
+            close_callback: Async function to call when closing: callback(thread_id) -> success
+            timeout: Optional timeout for the view (None = no timeout)
+        """
+        super().__init__(timeout=timeout)
+        self.thread_id = thread_id
+        self.owner_user_id = owner_user_id
+        self.close_callback = close_callback
+        self._closed = False
+
+    @discord.ui.button(
+        label="Close Terminal",
+        style=discord.ButtonStyle.secondary,
+        emoji="🔒",
+        custom_id="close_terminal",
+    )
+    async def close_terminal_button(
+        self, interaction: discord.Interaction, button: Button
+    ):
+        """Handle the Close Terminal button click."""
+        # Verify user is the owner
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message(
+                f"Only <@{self.owner_user_id}> can close this terminal session.",
+                ephemeral=True,
+            )
+            return
+
+        # Already closed?
+        if self._closed:
+            await interaction.response.send_message(
+                "Terminal session already closed.",
+                ephemeral=True,
+            )
+            return
+
+        # Defer response (closing might take a moment)
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Call the close callback
+            success = await self.close_callback(self.thread_id)
+
+            if success:
+                self._closed = True
+                # Disable the button
+                button.disabled = True
+                button.label = "Terminal Closed"
+                button.emoji = "✅"
+                await interaction.message.edit(view=self)
+
+                await interaction.followup.send(
+                    "Terminal session closed successfully.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "Failed to close terminal session. It may already be closed.",
+                    ephemeral=True,
+                )
+
+        except Exception as e:
+            logger.error(f"Error closing terminal {self.thread_id}: {e}")
+            await interaction.followup.send(
+                f"Error closing terminal: {str(e)[:100]}",
+                ephemeral=True,
+            )
+
+
+# Type for reset stale callback
+ResetStaleCallback = Callable[[str], None]
+
+
+class StaleTerminalView(View):
+    """
+    Discord View for stale terminal notification.
+
+    Shown after 1 hour of inactivity to ask user if they want to keep or close.
+    """
+
+    def __init__(
+        self,
+        thread_id: str,
+        owner_user_id: int,
+        close_callback: CloseTerminalCallback,
+        reset_stale_callback: Optional[ResetStaleCallback] = None,
+        timeout: float = 3600,  # 1 hour timeout for this notification
+    ):
+        super().__init__(timeout=timeout)
+        self.thread_id = thread_id
+        self.owner_user_id = owner_user_id
+        self.close_callback = close_callback
+        self.reset_stale_callback = reset_stale_callback
+        self._handled = False
+
+    @discord.ui.button(
+        label="Keep Open",
+        style=discord.ButtonStyle.primary,
+        emoji="▶️",
+        custom_id="keep_terminal",
+    )
+    async def keep_terminal_button(
+        self, interaction: discord.Interaction, button: Button
+    ):
+        """User wants to keep the terminal open."""
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message(
+                f"Only <@{self.owner_user_id}> can manage this terminal.",
+                ephemeral=True,
+            )
+            return
+
+        if self._handled:
+            await interaction.response.send_message(
+                "Already handled.",
+                ephemeral=True,
+            )
+            return
+
+        self._handled = True
+
+        # Reset the stale notification flag so user gets notified again after another hour
+        if self.reset_stale_callback:
+            self.reset_stale_callback(self.thread_id)
+
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(
+            content=f"<@{self.owner_user_id}> Terminal kept open. Will check again in 1 hour.",
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="Close Terminal",
+        style=discord.ButtonStyle.danger,
+        emoji="🔒",
+        custom_id="close_stale_terminal",
+    )
+    async def close_terminal_button(
+        self, interaction: discord.Interaction, button: Button
+    ):
+        """User wants to close the terminal."""
+        if interaction.user.id != self.owner_user_id:
+            await interaction.response.send_message(
+                f"Only <@{self.owner_user_id}> can manage this terminal.",
+                ephemeral=True,
+            )
+            return
+
+        if self._handled:
+            await interaction.response.send_message(
+                "Already handled.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        try:
+            success = await self.close_callback(self.thread_id)
+            self._handled = True
+
+            # Disable buttons
+            for child in self.children:
+                child.disabled = True
+
+            if success:
+                await interaction.message.edit(
+                    content=f"<@{self.owner_user_id}> Terminal session closed.",
+                    view=self,
+                )
+            else:
+                await interaction.message.edit(
+                    content=f"<@{self.owner_user_id}> Failed to close terminal (may already be closed).",
+                    view=self,
+                )
+
+        except Exception as e:
+            logger.error(f"Error closing stale terminal {self.thread_id}: {e}")
+            await interaction.followup.send(
+                f"Error: {str(e)[:100]}",
+                ephemeral=True,
+            )
+
+    async def on_timeout(self):
+        """Called when the view times out (after 1 hour of no interaction)."""
+        # The stale check loop will handle re-notifying
+        pass
+
+
+# =============================================================================
+# PROGRESS EMBED - CLAUDE CODE STYLE
+# =============================================================================
 
 class StepStatus(Enum):
-    """Status of a checklist step."""
+    """Status of a todo item."""
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
-    SKIPPED = "skipped"
 
 
 @dataclass
-class ChecklistStep:
-    """A step in the progress checklist."""
-    name: str
+class TodoItem:
+    """A todo item in the progress list."""
+    content: str
     status: StepStatus = StepStatus.PENDING
-    details: Optional[str] = None
 
     def to_string(self) -> str:
-        """Convert step to Discord-friendly string."""
+        """Convert to Claude Code style string."""
+        # Claude Code style: ☐ pending, ◉ in progress, ✓ done, ✗ failed
         emoji_map = {
-            StepStatus.PENDING: "⬜",
-            StepStatus.IN_PROGRESS: "🔄",
-            StepStatus.COMPLETED: "✅",
-            StepStatus.FAILED: "❌",
-            StepStatus.SKIPPED: "⏭️",
+            StepStatus.PENDING: "☐",
+            StepStatus.IN_PROGRESS: "◉",
+            StepStatus.COMPLETED: "✓",
+            StepStatus.FAILED: "✗",
         }
-        emoji = emoji_map.get(self.status, "⬜")
-        text = f"{emoji} {self.name}"
-        if self.details:
-            text += f"\n   └ {self.details}"
-        return text
+        emoji = emoji_map.get(self.status, "☐")
+        return f"{emoji} {self.content}"
 
 
 @dataclass
 class ProgressEmbed:
     """
-    Builder for Discord progress embeds.
+    Claude Code-style progress embed.
+
+    Minimal design:
+    - Title: Current action with spinner (✻ Working on X...)
+    - Body: Todo list (☐ pending, ◉ in progress, ✓ done)
+    - Footer: Elapsed time only
 
     Usage:
-        embed = ProgressEmbed(
-            title="Fixing Issue #5735",
-            description="URL encoding breaks with % characters"
-        )
-        embed.add_step("Analyze issue")
-        embed.add_step("Find root cause")
-        embed.add_step("Apply fix")
-        embed.add_step("Run tests")
-        embed.add_step("Create PR")
+        embed = ProgressEmbed(current_action="Analyzing code")
+        embed.add_todo("Read the file")
+        embed.add_todo("Make changes")
+        embed.add_todo("Run tests")
 
-        # Update as work progresses
-        embed.complete_step(0)
-        embed.start_step(1)
-        embed.set_status("Found bug in getImageURL.js")
+        embed.complete_todo(0)
+        embed.start_todo(1)
+        embed.set_action("Making changes")
 
-        # Get Discord embed object
         discord_embed = embed.build()
     """
 
-    title: str
-    description: str = ""
-    steps: List[ChecklistStep] = field(default_factory=list)
-    status_message: str = ""
+    current_action: str = "Working..."
+    todos: List[TodoItem] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.utcnow)
     color: int = 0x5865F2  # Discord blurple
-
-    # Links
-    issue_url: Optional[str] = None
-    pr_url: Optional[str] = None
-    repo_url: Optional[str] = None
 
     # State
     is_complete: bool = False
     is_failed: bool = False
 
+    # Legacy compatibility
+    title: str = ""
+    description: str = ""
+    status_message: str = ""
+    issue_url: Optional[str] = None
+    pr_url: Optional[str] = None
+    repo_url: Optional[str] = None
+
+    @property
+    def steps(self) -> List[TodoItem]:
+        """Alias for todos (backward compatibility)."""
+        return self.todos
+
+    def add_todo(self, content: str) -> int:
+        """Add a todo item. Returns index."""
+        self.todos.append(TodoItem(content=content))
+        return len(self.todos) - 1
+
     def add_step(self, name: str, details: Optional[str] = None) -> int:
-        """Add a step to the checklist. Returns step index."""
-        step = ChecklistStep(name=name, details=details)
-        self.steps.append(step)
-        return len(self.steps) - 1
+        """Backward compatible alias for add_todo."""
+        return self.add_todo(name)
+
+    def start_todo(self, index: int):
+        """Mark a todo as in progress and update current action."""
+        if 0 <= index < len(self.todos):
+            self.todos[index].status = StepStatus.IN_PROGRESS
+            self.current_action = self.todos[index].content
 
     def start_step(self, index: int, details: Optional[str] = None):
-        """Mark a step as in progress."""
-        if 0 <= index < len(self.steps):
-            self.steps[index].status = StepStatus.IN_PROGRESS
-            if details:
-                self.steps[index].details = details
+        """Backward compatible alias."""
+        self.start_todo(index)
+
+    def complete_todo(self, index: int):
+        """Mark a todo as completed."""
+        if 0 <= index < len(self.todos):
+            self.todos[index].status = StepStatus.COMPLETED
 
     def complete_step(self, index: int, details: Optional[str] = None):
-        """Mark a step as completed."""
-        if 0 <= index < len(self.steps):
-            self.steps[index].status = StepStatus.COMPLETED
-            if details:
-                self.steps[index].details = details
+        """Backward compatible alias."""
+        self.complete_todo(index)
+
+    def fail_todo(self, index: int):
+        """Mark a todo as failed."""
+        if 0 <= index < len(self.todos):
+            self.todos[index].status = StepStatus.FAILED
 
     def fail_step(self, index: int, details: Optional[str] = None):
-        """Mark a step as failed."""
-        if 0 <= index < len(self.steps):
-            self.steps[index].status = StepStatus.FAILED
-            if details:
-                self.steps[index].details = details
+        """Backward compatible alias."""
+        self.fail_todo(index)
 
     def skip_step(self, index: int, details: Optional[str] = None):
-        """Mark a step as skipped."""
-        if 0 <= index < len(self.steps):
-            self.steps[index].status = StepStatus.SKIPPED
-            if details:
-                self.steps[index].details = details
+        """Mark as completed (no skip in Claude Code style)."""
+        self.complete_todo(index)
+
+    def set_action(self, action: str):
+        """Set the current action shown in title."""
+        self.current_action = action
 
     def set_status(self, message: str):
-        """Set the current status message."""
-        self.status_message = message
+        """Backward compatible - sets current action."""
+        self.current_action = message
 
     def mark_complete(self, success: bool = True):
-        """Mark the entire task as complete."""
+        """Mark the task as complete."""
         self.is_complete = True
         self.is_failed = not success
         self.color = 0x57F287 if success else 0xED4245  # Green or red
@@ -140,71 +376,37 @@ class ProgressEmbed:
         if seconds < 60:
             return f"{seconds}s"
         minutes = seconds // 60
-        seconds = seconds % 60
+        secs = seconds % 60
         if minutes < 60:
-            return f"{minutes}m {seconds}s"
+            return f"{minutes}m {secs}s"
         hours = minutes // 60
-        minutes = minutes % 60
-        return f"{hours}h {minutes}m"
+        mins = minutes % 60
+        return f"{hours}h {mins}m"
 
-    def _get_status_emoji(self) -> str:
-        """Get emoji for current overall status."""
+    def _get_title(self) -> str:
+        """Build the title with spinner/status."""
         if self.is_complete:
-            return "✅" if not self.is_failed else "❌"
-        if self.is_failed:
-            return "❌"
-        # Check if any step is in progress
-        for step in self.steps:
-            if step.status == StepStatus.IN_PROGRESS:
-                return "🔄"
-        return "🔧"
+            emoji = "✓" if not self.is_failed else "✗"
+            status = "Done" if not self.is_failed else "Failed"
+            return f"{emoji} {status}"
+        else:
+            # Spinner + current action
+            return f"✻ {self.current_action}…"
 
     def build(self) -> discord.Embed:
         """Build the Discord embed object."""
-        # Title with status emoji
-        status_emoji = self._get_status_emoji()
         embed = discord.Embed(
-            title=f"{status_emoji} {self.title}",
-            description=self.description,
+            title=self._get_title(),
             color=self.color,
-            timestamp=self.started_at
         )
 
-        # Checklist
-        if self.steps:
-            checklist_text = "\n".join(step.to_string() for step in self.steps)
-            embed.add_field(
-                name="Progress",
-                value=checklist_text[:1024],  # Discord field limit
-                inline=False
-            )
+        # Todo list as description (cleaner than fields)
+        if self.todos:
+            todo_lines = [todo.to_string() for todo in self.todos]
+            embed.description = "\n".join(todo_lines)
 
-        # Current status message
-        if self.status_message:
-            embed.add_field(
-                name="Status",
-                value=f"💬 {self.status_message[:500]}",
-                inline=False
-            )
-
-        # Links
-        links = []
-        if self.issue_url:
-            links.append(f"[Issue]({self.issue_url})")
-        if self.pr_url:
-            links.append(f"[PR]({self.pr_url})")
-        if self.repo_url:
-            links.append(f"[Repo]({self.repo_url})")
-        if links:
-            embed.add_field(
-                name="Links",
-                value=" | ".join(links),
-                inline=False
-            )
-
-        # Footer with elapsed time
-        status_text = "Working" if not self.is_complete else ("Done" if not self.is_failed else "Failed")
-        embed.set_footer(text=f"⏱️ {self.elapsed_time()} | {status_text}")
+        # Minimal footer - just time
+        embed.set_footer(text=f"⏱ {self.elapsed_time()}")
 
         return embed
 
@@ -238,22 +440,25 @@ class ProgressEmbedManager:
 
     async def start(
         self,
-        title: str,
+        title: str = "",
         description: str = "",
         issue_url: Optional[str] = None,
         repo_url: Optional[str] = None,
+        current_action: str = "Starting...",
     ) -> discord.Message:
         """Create and send the initial embed."""
         self.embed = ProgressEmbed(
-            title=title,
-            description=description,
-            issue_url=issue_url,
-            repo_url=repo_url,
+            current_action=current_action or title or "Working...",
         )
 
         discord_embed = self.embed.build()
         self.message = await self.channel.send(embed=discord_embed)
         return self.message
+
+    def set_action(self, action: str):
+        """Set the current action (shown in title)."""
+        if self.embed:
+            self.embed.set_action(action)
 
     def add_step(self, name: str, details: Optional[str] = None) -> int:
         """Add a step. Returns step index."""
@@ -315,10 +520,35 @@ class ProgressEmbedManager:
                 # Log but don't crash on rate limits
                 logging.getLogger(__name__).warning(f"Failed to update embed: {e}")
 
-    async def finish(self, success: bool = True, final_status: Optional[str] = None):
-        """Mark complete and do final update."""
+    async def finish(
+        self,
+        success: bool = True,
+        final_status: Optional[str] = None,
+        view: Optional[View] = None,
+    ):
+        """
+        Mark complete and do final update.
+
+        Args:
+            success: Whether task completed successfully
+            final_status: Final status message to display
+            view: Optional Discord View (e.g., CloseTerminalView) to attach to the message
+        """
         if self.embed:
             self.embed.mark_complete(success)
             if final_status:
                 self.embed.set_status(final_status)
-        await self.update(force=True)
+
+        if not self.message or not self.embed:
+            return
+
+        async with self._update_lock:
+            try:
+                discord_embed = self.embed.build()
+                if view:
+                    await self.message.edit(embed=discord_embed, view=view)
+                else:
+                    await self.message.edit(embed=discord_embed)
+                self._last_update = datetime.utcnow()
+            except discord.HTTPException as e:
+                logger.warning(f"Failed to finish embed: {e}")

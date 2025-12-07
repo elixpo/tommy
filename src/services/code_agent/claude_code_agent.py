@@ -190,15 +190,25 @@ class ClaudeCodeAgent:
         prompt: str,
         task_description: str = "",
         on_progress: Optional[ProgressCallback] = None,
+        thread_id: Optional[int] = None,  # Discord thread ID - universal key
+        discord_user_id: Optional[int] = None,  # Discord user ID (numeric) for terminal ownership
+        discord_channel_id: Optional[int] = None,  # Discord channel ID for notifications
     ) -> ClaudeCodeResult:
         """
         Run a coding task using Claude Code.
 
         Args:
-            user_id: ID of the user requesting the task
+            user_id: ID of the user requesting the task (string, for git)
             prompt: The task prompt for Claude Code
             task_description: Human-readable description for the task
             on_progress: Callback for progress updates
+            thread_id: Discord thread ID - if provided, used as:
+                       - task_id (for tracking)
+                       - branch name (thread/{thread_id})
+                       Note: ccr sessions are managed internally by ccr and may
+                       auto-compact. Git branch is the true source of state.
+            discord_user_id: Discord user ID (numeric) - owner of the terminal session
+            discord_channel_id: Discord channel ID for stale terminal notifications
 
         Returns:
             ClaudeCodeResult with output and metadata
@@ -220,10 +230,11 @@ class ClaudeCodeAgent:
             # Get sandbox
             sandbox = await self._get_sandbox()
 
-            # Create task branch
+            # Create task branch (uses thread_id as universal key if provided)
             branch = await sandbox.create_task_branch(
                 user_id=user_id,
-                task_description=task_description or prompt[:100]
+                task_description=task_description or prompt[:100],
+                thread_id=thread_id,  # Pass thread_id for universal key
             )
             task_id = branch.task_id
 
@@ -244,7 +255,9 @@ class ClaudeCodeAgent:
                 sandbox,
                 branch,
                 prompt,
-                on_progress
+                on_progress,
+                discord_user_id=discord_user_id,
+                discord_channel_id=discord_channel_id,
             )
 
             progress.steps_completed.append("Run task")
@@ -297,6 +310,8 @@ class ClaudeCodeAgent:
         branch: TaskBranch,
         prompt: str,
         on_progress: Optional[ProgressCallback] = None,
+        discord_user_id: Optional[int] = None,
+        discord_channel_id: Optional[int] = None,
     ) -> CommandResult:
         """
         Execute ccr with heartbeat progress updates.
@@ -334,8 +349,12 @@ class ClaudeCodeAgent:
             if on_progress:
                 heartbeat_task = asyncio.create_task(heartbeat_loop())
 
-            # Execute ccr
-            result = await sandbox.run_ccr(branch, prompt)
+            # Execute ccr (pass Discord IDs for terminal ownership tracking)
+            result = await sandbox.run_ccr(
+                branch, prompt,
+                discord_user_id=discord_user_id,
+                discord_channel_id=discord_channel_id,
+            )
 
         finally:
             # Cancel heartbeat when done

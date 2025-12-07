@@ -601,7 +601,7 @@ Read ops always safe. Write ops require admin.""",
                     },
                     "task_id": {
                         "type": "string",
-                        "description": "Task ID for status checks"
+                        "description": "Task ID - CRITICAL: Pass this for ALL follow-up calls in the same thread to reuse the same branch and ccr session. Get task_id from initial task response."
                     }
                 },
                 "required": ["action"]
@@ -873,6 +873,21 @@ If ccr_response says it needs more information:
 - USE your tools (code_search, github_issue, etc.) to get that info
 - Call polly_agent AGAIN with the additional context
 - Keep iterating until task is complete
+
+**RULE 6: ALWAYS REUSE task_id IN SAME THREAD (CRITICAL!)**
+⚠️ This is the MOST IMPORTANT rule for efficiency:
+- First polly_agent(action="task") returns a `task_id` in the response
+- For ALL subsequent calls in the SAME Discord thread, you MUST pass that task_id
+- This ensures: same branch reused, same ccr session, context preserved
+- Without task_id: creates NEW branch, loses context, wastes resources
+
+Example flow:
+1. User: "update the readme" → polly_agent(action="task", task="...") → returns task_id="abc123"
+2. User: "now create a branch for it" → polly_agent(action="task", task="...", task_id="abc123") ← PASSES task_id!
+3. User: "push it" → polly_agent(action="push", task_id="abc123") ← PASSES task_id!
+
+❌ WRONG: Calling action="task" without task_id on follow-ups (creates duplicate branches)
+✅ RIGHT: Always include task_id from previous response for follow-up calls
 
 **You DO have code modification ability via polly_agent.** The changes are REAL!
 

@@ -11,28 +11,15 @@ import sys
 
 import discord
 
+from src.logging_config import setup_logging
 from src.config import config
 from src.bot import bot
 
 
-def setup_logging():
-    """Configure logging for the application."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-    # Reduce noise from discord.py
-    logging.getLogger("discord").setLevel(logging.WARNING)
-    logging.getLogger("discord.http").setLevel(logging.WARNING)
-
-
 def main():
     """Entry point for the bot."""
-    setup_logging()
+    # Setup clean logging
+    setup_logging(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
     logger.info("Starting Polly Helper Bot...")

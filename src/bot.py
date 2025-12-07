@@ -16,6 +16,8 @@ from .services.github_auth import init_github_app, github_app_auth
 from .services.pollinations import pollinations_client
 from .services.subscriptions import subscription_manager, init_notifier
 from .services.code_agent.tools import TOOL_HANDLERS as CODE_AGENT_HANDLERS
+from .services.code_agent.sandbox import get_persistent_sandbox
+from .services.code_agent.embed_builder import StaleTerminalView
 from .services.webhook_server import start_webhook_server, stop_webhook_server
 
 logger = logging.getLogger(__name__)
@@ -173,11 +175,13 @@ class PollyBot(commands.Bot):
         logger.info("GitHub webhook server started")
 
         self.cleanup_sessions.start()
+        self.check_stale_terminals.start()
         logger.info("Bot setup complete")
 
     async def close(self):
         """Clean up resources when bot shuts down."""
         self.cleanup_sessions.cancel()
+        self.check_stale_terminals.cancel()
         if self.issue_notifier:
             await self.issue_notifier.stop()
         if self.webhook_server:
@@ -207,6 +211,73 @@ class PollyBot(commands.Bot):
     @cleanup_sessions.before_loop
     async def before_cleanup(self):
         """Wait until the bot is ready before starting cleanup task."""
+        await self.wait_until_ready()
+
+    @tasks.loop(minutes=15)
+    async def check_stale_terminals(self):
+        """
+        Check for stale terminal sessions and notify users.
+
+        Runs every 15 minutes. After 1 hour of inactivity, sends a Discord
+        notification asking the user to close or keep the terminal open.
+        """
+        try:
+            sandbox = get_persistent_sandbox()
+            stale_terminals = await sandbox.check_stale_terminals(max_idle_seconds=3600)
+
+            for terminal_info in stale_terminals:
+                thread_id = terminal_info["thread_id"]
+                user_id = terminal_info["user_id"]
+                channel_id = terminal_info["channel_id"]
+                idle_mins = terminal_info["idle_seconds"] // 60
+
+                if not user_id or not channel_id:
+                    logger.warning(f"Stale terminal {thread_id} missing user_id/channel_id")
+                    continue
+
+                try:
+                    # Get the thread to send notification
+                    channel = self.get_channel(int(thread_id))
+                    if not channel:
+                        # Try fetching if not cached
+                        channel = await self.fetch_channel(int(thread_id))
+
+                    if channel:
+                        # Create close callback
+                        async def close_callback(tid: str) -> bool:
+                            return await sandbox.close_thread_terminal(tid)
+
+                        # Create reset stale callback
+                        def reset_stale_callback(tid: str):
+                            sandbox.reset_stale_notification(tid)
+
+                        # Create stale notification view
+                        view = StaleTerminalView(
+                            thread_id=thread_id,
+                            owner_user_id=user_id,
+                            close_callback=close_callback,
+                            reset_stale_callback=reset_stale_callback,
+                        )
+
+                        await channel.send(
+                            f"<@{user_id}> Your coding terminal has been idle for {idle_mins} minutes. "
+                            "Would you like to keep it open or close it?",
+                            view=view
+                        )
+                        logger.info(f"Sent stale terminal notification for thread {thread_id}")
+
+                except discord.NotFound:
+                    logger.warning(f"Thread {thread_id} not found, closing terminal")
+                    await sandbox.close_thread_terminal(thread_id)
+                except Exception as e:
+                    logger.error(f"Failed to notify stale terminal {thread_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error checking stale terminals: {e}")
+
+    @check_stale_terminals.before_loop
+    async def before_stale_check(self):
+        """Wait until the bot is ready before starting stale terminal check."""
         await self.wait_until_ready()
 
 
@@ -623,14 +694,18 @@ async def process_message(
         if original_handlers["polly_agent"] is None:
             logger.warning("wrapped_polly_agent: original handler is None")
             return {"error": "Code agent not available"}
-        # Inject Discord context
+
+        # Inject Discord context - thread_id is the KEY for task reuse
+        # polly_agent will auto-lookup existing task for this thread
         kwargs["discord_channel"] = channel
+        kwargs["discord_thread_id"] = session.thread_id  # Critical for branch reuse!
         kwargs["discord_bot"] = bot
         kwargs["discord_user_id"] = user.id
         kwargs["discord_user_name"] = str(user)
         kwargs["_is_admin"] = True  # Already checked above
         kwargs.setdefault("interactive", True)
         kwargs.setdefault("human_review", True)
+
         return await original_handlers["polly_agent"](**kwargs)
 
     # Register wrapped handlers temporarily
@@ -642,6 +717,7 @@ async def process_message(
 
     try:
         # Process with native tool calling
+        # Note: polly_agent handles task_id lookup via thread_id internally
         result = await pollinations_client.process_with_tools(
             user_message=text,
             discord_username=str(user),

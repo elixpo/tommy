@@ -16,13 +16,278 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# PERSISTENT TERMINAL SESSION
+# =============================================================================
+
+@dataclass
+class TerminalSession:
+    """
+    A persistent terminal session inside Docker.
+
+    Each Discord thread gets its own terminal that stays alive between
+    polly_agent calls. This is critical because:
+    - ccr auto-compacts sessions when context is too long
+    - Auto-compaction creates a new session BUT stays in the same terminal
+    - The new session gets context passed from the old session
+    - So terminal persistence = conversation context persistence
+    """
+    thread_id: str  # Discord thread ID (THE universal key)
+    process: asyncio.subprocess.Process
+    stdin: asyncio.StreamWriter
+    stdout: asyncio.StreamReader
+    stderr: asyncio.StreamReader
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    last_used: datetime = field(default_factory=datetime.utcnow)
+    is_busy: bool = False  # True when ccr is running
+    user_id: int = 0  # Discord user ID who started this terminal
+    channel_id: int = 0  # Discord channel ID for notifications
+    notified_stale: bool = False  # True if we've sent stale notification
+
+    async def send_command(self, command: str, timeout: Optional[int] = None) -> str:
+        """
+        Send a command to this terminal and wait for output.
+
+        Uses a marker to detect command completion.
+        """
+        marker = f"__CCR_DONE_{self.thread_id}_{datetime.utcnow().timestamp()}__"
+
+        # Send command with completion marker
+        full_cmd = f"{command}; echo '{marker}'\n"
+        self.stdin.write(full_cmd.encode())
+        await self.stdin.drain()
+
+        # Read until we see the marker
+        output_lines = []
+        start_time = asyncio.get_running_loop().time()
+
+        while True:
+            if timeout:
+                remaining = timeout - (asyncio.get_running_loop().time() - start_time)
+                if remaining <= 0:
+                    return "\n".join(output_lines) + "\n[TIMEOUT]"
+                try:
+                    line = await asyncio.wait_for(
+                        self.stdout.readline(),
+                        timeout=remaining
+                    )
+                except asyncio.TimeoutError:
+                    return "\n".join(output_lines) + "\n[TIMEOUT]"
+            else:
+                line = await self.stdout.readline()
+
+            if not line:
+                break
+
+            decoded = line.decode(errors="replace").rstrip()
+
+            if marker in decoded:
+                # Remove the marker line from output
+                break
+
+            output_lines.append(decoded)
+
+        self.last_used = datetime.utcnow()
+        return "\n".join(output_lines)
+
+    async def close(self):
+        """Close this terminal session."""
+        try:
+            self.stdin.write(b"exit\n")
+            await self.stdin.drain()
+            self.process.terminate()
+            await asyncio.wait_for(self.process.wait(), timeout=5)
+        except Exception as e:
+            logger.warning(f"Error closing terminal {self.thread_id}: {e}")
+            self.process.kill()
+
+
+class TerminalManager:
+    """
+    Manages persistent terminal sessions per Discord thread.
+
+    Key insight: ccr runs in print mode, but when it auto-compacts a long
+    session, the new session stays in the SAME terminal and inherits context.
+    So we need to keep terminals alive per thread, not per ccr call.
+
+    Terminal lifecycle:
+    - Created when user starts a task in a Discord thread
+    - Stays alive for follow-up commands in same thread
+    - User can manually close anytime via polly_agent(action='close_terminal')
+    - After 1 hour idle, bot sends Discord notification asking to close/keep
+    - Only the user who started the terminal can close it
+    """
+
+    def __init__(self, container_name: str = CONTAINER_NAME):
+        self.container_name = container_name
+        self._terminals: Dict[str, TerminalSession] = {}
+        self._lock = asyncio.Lock()
+        # Callback for sending Discord notifications (set by bot.py)
+        self._notify_callback = None
+
+    def set_notify_callback(self, callback):
+        """Set callback for Discord notifications: callback(user_id, channel_id, thread_id, message, view)"""
+        self._notify_callback = callback
+
+    async def get_terminal(
+        self,
+        thread_id: str,
+        user_id: int = 0,
+        channel_id: int = 0,
+    ) -> TerminalSession:
+        """
+        Get or create a persistent terminal for a Discord thread.
+
+        The terminal runs as 'coder' user with proper environment.
+        """
+        async with self._lock:
+            if thread_id in self._terminals:
+                terminal = self._terminals[thread_id]
+                # Check if still alive
+                if terminal.process.returncode is None:
+                    logger.debug(f"Reusing existing terminal for thread {thread_id}")
+                    return terminal
+                else:
+                    logger.info(f"Terminal for thread {thread_id} died, recreating")
+                    del self._terminals[thread_id]
+
+            # Create new terminal
+            terminal = await self._create_terminal(thread_id)
+            # Store Discord metadata for notifications
+            terminal.user_id = user_id
+            terminal.channel_id = channel_id
+            self._terminals[thread_id] = terminal
+            return terminal
+
+    async def _create_terminal(self, thread_id: str) -> TerminalSession:
+        """Create a new persistent terminal session in Docker."""
+        logger.info(f"Creating persistent terminal for thread {thread_id}")
+
+        # Start an interactive shell in the container as coder user
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "-i",
+            "-u", "coder",
+            "-w", "/workspace/pollinations",
+            self.container_name,
+            "bash", "--norc", "--noprofile",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
+        )
+
+        terminal = TerminalSession(
+            thread_id=thread_id,
+            process=proc,
+            stdin=proc.stdin,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+        )
+
+        # Initialize the shell environment
+        init_cmds = [
+            "export PS1=''",  # No prompt (cleaner output)
+            "export ANTHROPIC_API_KEY=dummy",
+            "export HOME=/home/coder",
+            "cd /workspace/pollinations",
+        ]
+
+        for cmd in init_cmds:
+            await terminal.send_command(cmd, timeout=5)
+
+        logger.info(f"Terminal created for thread {thread_id}")
+        return terminal
+
+    async def close_terminal(self, thread_id: str) -> bool:
+        """
+        Close a terminal session.
+
+        Returns:
+            True if terminal was found and closed, False if not found
+        """
+        async with self._lock:
+            if thread_id in self._terminals:
+                terminal = self._terminals.pop(thread_id)
+                await terminal.close()
+                logger.info(f"Closed terminal for thread {thread_id}")
+                return True
+            else:
+                logger.debug(f"Terminal for thread {thread_id} not found (already closed?)")
+                return False
+
+    async def check_stale_terminals(self, max_idle_seconds: int = 3600) -> list[dict]:
+        """
+        Check for stale terminals that need user notification.
+
+        Does NOT auto-close! Instead returns list of stale terminals
+        so the bot can send Discord notifications with buttons.
+
+        Returns:
+            List of dicts with thread_id, user_id, channel_id for stale terminals
+        """
+        stale_terminals = []
+
+        async with self._lock:
+            now = datetime.utcnow()
+
+            for thread_id, terminal in self._terminals.items():
+                idle_time = (now - terminal.last_used).total_seconds()
+
+                # Check if idle > threshold and not busy and not already notified
+                if (idle_time > max_idle_seconds and
+                    not terminal.is_busy and
+                    not terminal.notified_stale):
+
+                    # Mark as notified so we don't spam
+                    terminal.notified_stale = True
+
+                    stale_terminals.append({
+                        "thread_id": thread_id,
+                        "user_id": terminal.user_id,
+                        "channel_id": terminal.channel_id,
+                        "idle_seconds": int(idle_time),
+                    })
+                    logger.info(f"Terminal {thread_id} is stale (idle {int(idle_time)}s)")
+
+        return stale_terminals
+
+    def reset_stale_notification(self, thread_id: str):
+        """
+        Reset the stale notification flag for a terminal.
+
+        Call this when user clicks "Keep Open" so they get notified again
+        after another hour of inactivity.
+        """
+        if thread_id in self._terminals:
+            self._terminals[thread_id].notified_stale = False
+            self._terminals[thread_id].last_used = datetime.utcnow()
+
+    async def cleanup_stale(self, max_idle_seconds: int = 3600):
+        """
+        Legacy method - now just logs stale terminals.
+
+        Use check_stale_terminals() instead for proper Discord notification flow.
+        """
+        stale = await self.check_stale_terminals(max_idle_seconds)
+        if stale:
+            logger.info(f"Found {len(stale)} stale terminals (not auto-closing)")
+
+    async def close_all(self):
+        """Close all terminal sessions."""
+        async with self._lock:
+            for thread_id, terminal in list(self._terminals.items()):
+                await terminal.close()
+            self._terminals.clear()
+            logger.info("Closed all terminal sessions")
 
 # Project root (Polli/) - dynamic, not hardcoded
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
@@ -80,6 +345,7 @@ class PersistentSandbox:
     - Branch-based task isolation
     - Concurrent task support (multiple ccr processes)
     - Survives bot restarts
+    - Persistent terminal sessions per Discord thread (for ccr context)
 
     Usage:
         sandbox = PersistentSandbox()
@@ -97,6 +363,7 @@ class PersistentSandbox:
     def __init__(self, config: Optional[SandboxConfig] = None):
         self.config = config or SandboxConfig()
         self.active_branches: dict[str, TaskBranch] = {}
+        self.terminal_manager = TerminalManager()  # Persistent terminals per thread
         self._setup_directories()
 
     def _setup_directories(self):
@@ -406,7 +673,8 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
         self,
         user_id: str,
         task_description: str,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        thread_id: Optional[int] = None,  # Discord thread ID - THE universal key
     ) -> TaskBranch:
         """
         Create a new git branch for a task.
@@ -416,11 +684,22 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
 
         IMPORTANT: Always fetches latest from origin and branches from origin/main
         to ensure we're working with the latest code.
-        """
-        import uuid
 
-        task_id = task_id or str(uuid.uuid4())[:8]
-        branch_name = f"task/{task_id}"
+        Thread ID as Universal Key:
+        - If thread_id provided, use it directly as task_id and branch name
+        - This means: thread_id = task_id = branch_name = ccr session
+        - No mapping needed - the thread ID IS the identifier
+        - Example: thread 1234567890 → branch "thread/1234567890"
+        """
+        # Use thread_id as the universal key if provided
+        if thread_id:
+            task_id = str(thread_id)
+            branch_name = f"thread/{thread_id}"
+        else:
+            # Fallback for non-Discord usage (e.g., CLI testing)
+            import uuid
+            task_id = task_id or str(uuid.uuid4())[:8]
+            branch_name = f"task/{task_id}"
 
         # CRITICAL: Fetch latest from origin first
         logger.info("Fetching latest from origin...")
@@ -479,36 +758,114 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
         self,
         branch: TaskBranch,
         prompt: str,
+        discord_user_id: int = 0,
+        discord_channel_id: int = 0,
     ) -> CommandResult:
         """
-        Run ccr on a specific task branch.
+        Run ccr on a specific task branch using persistent terminal.
 
         Args:
             branch: TaskBranch to work on
             prompt: The task prompt for ccr
+            discord_user_id: Discord user ID (for terminal ownership tracking)
+            discord_channel_id: Discord channel ID (for stale terminal notifications)
 
         Returns:
             CommandResult with ccr output
+
+        Terminal Persistence (KEY INSIGHT):
+        - Each Discord thread gets a persistent terminal session
+        - ccr runs in that terminal via print mode (-p)
+        - When ccr auto-compacts (context too long), it stays in SAME terminal
+        - The new session inherits context from the old one
+        - So: terminal persistence = ccr conversation context persistence!
+
+        Git Branch State:
+        - git branch is always the source of truth for code changes
+        - ccr sees committed code even without conversation memory
+        - Both terminal context AND git history provide continuity
         """
-        # Ensure we're on the right branch
-        await self.execute(
-            f"cd /workspace/pollinations && git checkout {branch.branch_name}",
-            as_coder=True
+        # Add instruction about commit messages (no Claude attribution)
+        full_prompt = (
+            "IMPORTANT: When making commits, use simple descriptive messages. "
+            "Do NOT include any Claude, AI, or bot attribution in commit messages. "
+            "Just describe what was changed.\n\n"
+            f"{prompt}"
         )
 
-        # Escape prompt for shell
-        escaped_prompt = prompt.replace("'", "'\\''").replace('"', '\\"')
+        # Escape prompt for shell using shlex.quote for proper sanitization
+        escaped_prompt = shlex.quote(full_prompt)
 
-        # Run ccr
-        # -p: print mode (non-interactive)
+        # Build ccr command
+        # -p: print mode (non-interactive, outputs result and exits)
         # --dangerously-skip-permissions: auto-accept (safe in sandbox)
-        cmd = f'cd /workspace/pollinations && ANTHROPIC_API_KEY=dummy ccr code -p --dangerously-skip-permissions "{escaped_prompt}"'
+        ccr_cmd = f"ccr code -p --dangerously-skip-permissions {escaped_prompt}"
 
         logger.info(f"Running ccr on branch {branch.branch_name}: {prompt[:100]}...")
 
-        result = await self.execute(cmd, as_coder=True, timeout=None)  # No timeout
+        # Check if this is a thread-based task (has thread_id as task_id)
+        # Thread IDs are numeric and typically large
+        is_thread_task = branch.task_id.isdigit() and len(branch.task_id) > 10
 
-        return result
+        if is_thread_task:
+            # Use persistent terminal for thread-based tasks
+            return await self._run_ccr_in_terminal(
+                branch, ccr_cmd,
+                discord_user_id=discord_user_id,
+                discord_channel_id=discord_channel_id,
+            )
+        else:
+            # Fallback to one-shot execution for non-thread tasks (CLI testing, etc.)
+            cmd = f"cd /workspace/pollinations && git checkout {branch.branch_name} && {ccr_cmd}"
+            return await self.execute(cmd, as_coder=True, timeout=None)
+
+    async def _run_ccr_in_terminal(
+        self,
+        branch: TaskBranch,
+        ccr_cmd: str,
+        discord_user_id: int = 0,
+        discord_channel_id: int = 0,
+    ) -> CommandResult:
+        """
+        Run ccr in a persistent terminal session.
+
+        The terminal stays alive between polly_agent calls, so ccr can
+        maintain conversation context even when it auto-compacts sessions.
+        """
+        start_time = asyncio.get_running_loop().time()
+
+        try:
+            # Get persistent terminal for this thread (pass Discord IDs for ownership tracking)
+            terminal = await self.terminal_manager.get_terminal(
+                branch.task_id,
+                user_id=discord_user_id,
+                channel_id=discord_channel_id,
+            )
+            terminal.is_busy = True
+
+            # Ensure we're on the right branch
+            await terminal.send_command(f"git checkout {branch.branch_name}", timeout=30)
+
+            # Run ccr (no timeout - it can take a while)
+            output = await terminal.send_command(ccr_cmd, timeout=None)
+
+            terminal.is_busy = False
+
+            return CommandResult(
+                exit_code=0,  # We can't easily get exit code from terminal
+                stdout=output,
+                stderr="",
+                duration=asyncio.get_running_loop().time() - start_time
+            )
+
+        except Exception as e:
+            logger.error(f"Error running ccr in terminal: {e}")
+            return CommandResult(
+                exit_code=1,
+                stdout="",
+                stderr=str(e),
+                duration=asyncio.get_running_loop().time() - start_time
+            )
 
     async def get_branch_diff(self, branch: TaskBranch) -> str:
         """Get the git diff for a task branch."""
@@ -633,11 +990,15 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
 
     async def stop(self):
         """Stop the sandbox container (for maintenance)."""
+        # Close all terminal sessions first
+        await self.terminal_manager.close_all()
         await self._run_host_command(["docker", "stop", CONTAINER_NAME])
         logger.info(f"Stopped sandbox {CONTAINER_NAME}")
 
     async def destroy(self):
         """Completely remove the sandbox container and data."""
+        # Close all terminal sessions first
+        await self.terminal_manager.close_all()
         await self._run_host_command(["docker", "stop", CONTAINER_NAME])
         await self._run_host_command(["docker", "rm", CONTAINER_NAME])
 
@@ -653,6 +1014,36 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
             "docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME
         ])
         return "true" in result.stdout.lower()
+
+    async def close_thread_terminal(self, thread_id: str) -> bool:
+        """
+        Close the persistent terminal for a specific thread.
+
+        Returns:
+            True if terminal was found and closed, False if not found
+        """
+        return await self.terminal_manager.close_terminal(thread_id)
+
+    async def check_stale_terminals(self, max_idle_seconds: int = 3600) -> list[dict]:
+        """
+        Check for terminals idle longer than threshold.
+
+        Returns list of stale terminal info for Discord notification.
+        Does NOT auto-close - that's up to the user.
+        """
+        return await self.terminal_manager.check_stale_terminals(max_idle_seconds)
+
+    def reset_stale_notification(self, thread_id: str):
+        """Reset stale notification flag when user clicks 'Keep Open'."""
+        self.terminal_manager.reset_stale_notification(thread_id)
+
+    async def cleanup_stale_terminals(self, max_idle_seconds: int = 3600):
+        """Legacy method - use check_stale_terminals() for proper notification flow."""
+        await self.terminal_manager.cleanup_stale(max_idle_seconds)
+
+    async def close_all_terminals(self):
+        """Close all persistent terminal sessions."""
+        await self.terminal_manager.close_all()
 
     def get_workspace_path(self) -> Path:
         """Get the host path to workspace (for direct file access)."""
@@ -690,15 +1081,15 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
                 logger.error("Failed to get GitHub App token")
                 return False
 
-            # Create credential helper script that returns the token
-            # This script will be called by git when it needs credentials
-            credential_script = f'''#!/bin/bash
+            # Create credential helper script that reads token from environment variable
+            # This is more secure than embedding the token directly in the script
+            credential_script = '''#!/bin/bash
 # GitHub App credential helper for Polly Bot
+# Reads token from GH_TOKEN environment variable (set per-session)
 echo "username=x-access-token"
-echo "password={token}"
+echo "password=$GH_TOKEN"
 '''
-            # Write the credential helper script to sandbox
-            # First, create the script content as a file on host, then copy to container
+            # Write the credential helper script to sandbox (no token in script)
             helper_path = SANDBOX_DIR / "git-credential-polly"
             helper_path.write_text(credential_script)
 
@@ -724,10 +1115,20 @@ echo "password={token}"
                 as_coder=True
             )
 
+            # Set the token as environment variable in the container
+            # Using docker exec to set it in the coder user's bashrc for persistence
+            escaped_token = shlex.quote(token)
+            await self.execute(
+                f"echo 'export GH_TOKEN={escaped_token}' >> /home/coder/.bashrc",
+                as_coder=True
+            )
+            # Also export it immediately for current session
+            await self.execute(f"export GH_TOKEN={escaped_token}", as_coder=True)
+
             # Clean up local helper file
             helper_path.unlink(missing_ok=True)
 
-            logger.info("GitHub App credentials configured in sandbox")
+            logger.info("GitHub App credentials configured in sandbox (token via env var)")
             return True
 
         except Exception as e:
