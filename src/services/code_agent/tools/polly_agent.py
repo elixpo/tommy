@@ -236,6 +236,7 @@ async def tool_polly_agent(
                 user_name=discord_user_name or "Unknown",
                 existing_task_id=task_id,  # Reuse existing branch if task_id provided
                 thread_id=discord_thread_id,  # For thread→task mapping
+                discord_user_id=kwargs.get("discord_user_id", 0),  # For terminal ownership
             )
 
         # Sandbox operations - work with existing sandbox
@@ -522,6 +523,7 @@ async def _handle_code_task(
     user_name: Optional[str] = None,
     existing_task_id: Optional[str] = None,  # Legacy - kept for compatibility
     thread_id: Optional[int] = None,  # Discord thread ID - THE universal key
+    discord_user_id: int = 0,  # Discord user ID for terminal ownership
 ) -> dict:
     """
     Handle coding task via ccr.
@@ -630,8 +632,7 @@ async def _handle_code_task(
 
                 await embed_manager.update()
 
-        # Get Discord user ID from kwargs (injected by bot.py)
-        discord_user_id = kwargs.get("discord_user_id", 0)
+        # Get channel ID for stale notifications
         discord_channel_id = channel.id if channel else 0
 
         result: ClaudeCodeResult = await agent.run_task(
