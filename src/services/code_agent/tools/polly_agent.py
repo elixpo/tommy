@@ -1162,8 +1162,39 @@ async def _handle_push(
     else:
         uncommitted_files = []  # No uncommitted files
 
-    # Generate proper branch name if type provided
+    # Generate proper branch name - REQUIRED for push
+    # We never push thread/* or task/* branches directly to GitHub
     target_branch = actual_branch
+
+    # Auto-infer branch_type from task description if not provided
+    if not branch_type and (actual_branch.startswith("task/") or actual_branch.startswith("thread/")):
+        # Try to infer from task description
+        task_desc_lower = ""
+        if task_id and task_id in _running_tasks:
+            task_desc_lower = _running_tasks[task_id].get("task", "").lower()
+
+        # Infer type from common keywords
+        if any(word in task_desc_lower for word in ["fix", "bug", "error", "issue", "broken", "crash"]):
+            branch_type = "fix"
+        elif any(word in task_desc_lower for word in ["doc", "readme", "comment", "documentation"]):
+            branch_type = "docs"
+        elif any(word in task_desc_lower for word in ["refactor", "cleanup", "clean up", "reorganize"]):
+            branch_type = "refactor"
+        elif any(word in task_desc_lower for word in ["test", "spec", "testing"]):
+            branch_type = "test"
+        elif any(word in task_desc_lower for word in ["style", "format", "lint"]):
+            branch_type = "style"
+        elif any(word in task_desc_lower for word in ["perf", "performance", "optimize", "speed"]):
+            branch_type = "perf"
+        else:
+            branch_type = "feat"  # Default to feature
+
+        # Use task description as branch_description if not provided
+        if not branch_description and task_id and task_id in _running_tasks:
+            branch_description = _running_tasks[task_id].get("task", "update")[:50]
+
+        logger.info(f"Auto-inferred branch_type='{branch_type}' from task description")
+
     proper_name = _generate_branch_name(branch_type, branch_description, task_id)
 
     if proper_name and (actual_branch.startswith("task/") or actual_branch.startswith("thread/")):
