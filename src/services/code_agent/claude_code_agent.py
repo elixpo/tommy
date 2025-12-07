@@ -3,17 +3,15 @@ Code Agent - Uses ccr CLI for coding tasks.
 
 Architecture:
 - Bot AI interprets user intent and builds context
-- Creates Docker sandbox with repo cloned
-- Installs ccr in sandbox
+- Uses persistent Docker sandbox with ccr
+- Each task gets its own git branch for isolation
 - Runs coding tasks via `ccr code "prompt"`
-- Streams output back for Discord
+- Bot AI handles all git operations (push, PR, etc.)
 
-This replaces the complex AutonomousAgent with a cleaner architecture
-where ccr handles all the coding work.
+The sandbox is persistent (24/7) and survives bot restarts.
 """
 
 import asyncio
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -21,7 +19,12 @@ from typing import Optional, Callable, Awaitable, List
 from datetime import datetime
 from enum import Enum
 
-from .sandbox import SandboxManager, sandbox_manager, Sandbox, CommandResult
+from .sandbox import (
+    get_persistent_sandbox,
+    PersistentSandbox,
+    TaskBranch,
+    CommandResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +41,9 @@ def parse_todos_from_output(output: str) -> List[TodoItem]:
     Parse todo items from Claude Code output.
 
     Claude Code outputs todos in various formats:
-    - ⬜ Pending task
-    - 🔄 In progress task
-    - ✅ Completed task
+    - [ ] Pending task
+    -  In progress task
+    -  Completed task
     - [ ] Unchecked
     - [x] Checked
     - "- task name" in todo lists
@@ -94,6 +97,7 @@ def parse_todos_from_output(output: str) -> List[TodoItem]:
 
     return todos[:10]  # Limit to 10 todos
 
+
 # Callback types
 ProgressCallback = Callable[[str], Awaitable[None]]
 
@@ -111,19 +115,12 @@ class AgentStatus(Enum):
 @dataclass
 class ClaudeCodeConfig:
     """Configuration for Claude Code agent."""
-    # ccr config
-    api_base_url: str = "https://gen.pollinations.ai/v1/chat/completions"
-    api_key: str = ""  # Pollinations API key for ccr
-    default_model: str = "claude-large"
-    background_model: str = "gemini"
-    web_search_model: str = "perplexity-fast"
+    # Timeouts (None = no timeout)
+    setup_timeout: int = 300  # 5 min for initial setup only
+    task_timeout: Optional[int] = None  # No timeout for tasks
 
-    # Timeouts
-    setup_timeout: int = 180  # 3 min for npm install
-    task_timeout: int = 600   # 10 min per task
-
-    # Non-interactive mode (prevents Claude Code from prompting)
-    non_interactive: bool = True
+    # Heartbeat interval for progress updates
+    heartbeat_interval: int = 30  # seconds
 
 
 @dataclass
@@ -147,444 +144,335 @@ class ClaudeCodeResult:
     success: bool
     output: str
     files_changed: list = field(default_factory=list)
-    commits_made: list = field(default_factory=list)
-    pr_url: Optional[str] = None
+    branch_name: Optional[str] = None
     error: Optional[str] = None
     duration_seconds: int = 0
-    todos: List[TodoItem] = field(default_factory=list)  # Parsed todo items
+    todos: List[TodoItem] = field(default_factory=list)
 
 
 class ClaudeCodeAgent:
     """
     Agent that uses Claude Code CLI for coding tasks.
 
+    Uses persistent sandbox with branch-based task isolation.
+    Bot AI handles all git operations (push, PR, etc.) after ccr completes.
+
     Usage:
-        agent = ClaudeCodeAgent(sandbox_manager)
+        agent = ClaudeCodeAgent()
         result = await agent.run_task(
-            sandbox_id="abc123",
+            user_id="user123",
             prompt="Fix the URL encoding bug in getImageURL.js",
             on_progress=update_discord_embed
         )
     """
 
-    def __init__(
-        self,
-        sandbox_mgr: Optional[SandboxManager] = None,
-        config: Optional[ClaudeCodeConfig] = None,
-    ):
-        self.sandbox_mgr = sandbox_mgr or sandbox_manager
+    def __init__(self, config: Optional[ClaudeCodeConfig] = None):
         self.config = config or ClaudeCodeConfig()
-        self._active_tasks: dict = {}
-        self._progress: dict = {}
+        self._sandbox: Optional[PersistentSandbox] = None
+        self._progress: dict[str, TaskProgress] = {}
+        self._active_branches: dict[str, TaskBranch] = {}
 
-    async def setup_sandbox(self, sandbox_id: str) -> bool:
-        """
-        Install Claude Code and ccr in the sandbox.
+    async def _get_sandbox(self) -> PersistentSandbox:
+        """Get the persistent sandbox, ensuring it's running."""
+        if self._sandbox is None:
+            self._sandbox = get_persistent_sandbox()
 
-        Creates a non-root user 'coder' because --dangerously-skip-permissions
-        cannot be used with root for security reasons.
+        # Ensure sandbox is running
+        if not await self._sandbox.is_running():
+            await self._sandbox.ensure_running()
+            await self._sandbox.sync_repo()
 
-        Returns True if setup successful.
-        """
-        sandbox = self.sandbox_mgr.sandboxes.get(sandbox_id)
-        if not sandbox:
-            logger.error(f"Sandbox {sandbox_id} not found")
-            return False
-
-        logger.info(f"Setting up Claude Code in sandbox {sandbox_id}")
-
-        # Install Claude Code and ccr globally
-        install_cmd = "npm install -g @anthropic-ai/claude-code @musistudio/claude-code-router 2>&1"
-        result = await self.sandbox_mgr.execute(
-            sandbox_id,
-            install_cmd,
-            timeout=self.config.setup_timeout
-        )
-
-        if result.exit_code != 0:
-            logger.error(f"Failed to install Claude Code: {result.stderr}")
-            return False
-
-        logger.info(f"Claude Code installed in sandbox {sandbox_id}")
-
-        # Create non-root user 'coder' for running Claude Code
-        # --dangerously-skip-permissions cannot be used as root
-        user_setup_cmd = """
-useradd -m coder 2>/dev/null || true
-mkdir -p /home/coder/.claude-code-router
-chown -R coder:coder /home/coder
-chown -R coder:coder /workspace 2>/dev/null || true
-"""
-        await self.sandbox_mgr.execute(sandbox_id, user_setup_cmd, timeout=10)
-
-        # Write ccr config for coder user
-        ccr_config = self._build_ccr_config()
-        config_cmd = f"""
-cat > /home/coder/.claude-code-router/config.json << 'EOFCONFIG'
-{json.dumps(ccr_config, indent=2)}
-EOFCONFIG
-chown coder:coder /home/coder/.claude-code-router/config.json
-"""
-        result = await self.sandbox_mgr.execute(sandbox_id, config_cmd, timeout=10)
-
-        if result.exit_code != 0:
-            logger.error(f"Failed to write ccr config: {result.stderr}")
-            return False
-
-        logger.info(f"ccr config written in sandbox {sandbox_id}")
-
-        # Fix temp file permissions for ccr reference count
-        temp_fix_cmd = """
-touch /tmp/claude-code-reference-count.txt
-chmod 666 /tmp/claude-code-reference-count.txt
-"""
-        await self.sandbox_mgr.execute(sandbox_id, temp_fix_cmd, timeout=5)
-
-        # Start ccr service as coder user
-        start_cmd = "su - coder -c 'ccr start' 2>&1"
-        result = await self.sandbox_mgr.execute(sandbox_id, start_cmd, timeout=30)
-
-        # ccr start may return non-zero if already running, that's ok
-        if "started" in result.stdout.lower() or "running" in result.stdout.lower() or "loaded" in result.stdout.lower():
-            logger.info(f"ccr service started in sandbox {sandbox_id}")
-            return True
-
-        # Check status
-        status_cmd = "su - coder -c 'ccr status' 2>&1"
-        result = await self.sandbox_mgr.execute(sandbox_id, status_cmd, timeout=10)
-
-        if result.exit_code == 0 or "running" in result.stdout.lower():
-            logger.info(f"ccr service running in sandbox {sandbox_id}")
-            return True
-
-        logger.error(f"ccr service failed to start: {result.stdout} {result.stderr}")
-        return False
-
-    def _build_ccr_config(self) -> dict:
-        """Build the ccr configuration dictionary."""
-        return {
-            "LOG": True,
-            "LOG_LEVEL": "debug",
-            "CLAUDE_PATH": "",
-            "HOST": "127.0.0.1",
-            "PORT": 3456,
-            "APIKEY": "",
-            "API_TIMEOUT_MS": str(self.config.task_timeout * 1000),
-            "PROXY_URL": "",
-            "transformers": [],
-            "Providers": [
-                {
-                    "name": "main",
-                    "api_base_url": self.config.api_base_url,
-                    "api_key": self.config.api_key,
-                    "models": [
-                        "openai-large",
-                        "gemini-large",
-                        "gemini",
-                        "claude-large",
-                        "perplexity-fast"
-                    ],
-                    "transformer": {
-                        "use": ["customparams"]
-                    }
-                }
-            ],
-            "StatusLine": {
-                "enabled": True,
-                "currentStyle": "default",
-                "default": {"modules": []},
-                "powerline": {"modules": []}
-            },
-            "Router": {
-                "default": f"main,{self.config.default_model}",
-                "background": f"main,{self.config.background_model}",
-                "think": "",
-                "longContext": "",
-                "longContextThreshold": 60000,
-                "webSearch": f"main,{self.config.web_search_model}",
-                "image": ""
-            },
-            "CUSTOM_ROUTER_PATH": ""
-        }
+        return self._sandbox
 
     async def run_task(
         self,
-        sandbox_id: str,
+        user_id: str,
         prompt: str,
+        task_description: str = "",
         on_progress: Optional[ProgressCallback] = None,
-        timeout: Optional[int] = None,
     ) -> ClaudeCodeResult:
         """
         Run a coding task using Claude Code.
 
         Args:
-            sandbox_id: ID of the sandbox to run in
+            user_id: ID of the user requesting the task
             prompt: The task prompt for Claude Code
+            task_description: Human-readable description for the task
             on_progress: Callback for progress updates
-            timeout: Override default timeout
 
         Returns:
             ClaudeCodeResult with output and metadata
         """
-        timeout = timeout or self.config.task_timeout
+        task_id = None
+        branch = None
 
-        # Initialize progress tracking
-        progress = TaskProgress(
-            status=AgentStatus.SETTING_UP,
-            current_step="Setting up Claude Code",
-            steps_pending=["Setup", "Run task", "Collect results"]
-        )
-        self._progress[sandbox_id] = progress
+        try:
+            # Initialize progress tracking
+            progress = TaskProgress(
+                status=AgentStatus.SETTING_UP,
+                current_step="Setting up sandbox",
+                steps_pending=["Setup", "Run task", "Collect results"]
+            )
 
-        if on_progress:
-            await on_progress("🔧 Setting up coding environment...")
+            if on_progress:
+                await on_progress("🔧 Setting up coding environment...")
 
-        # Setup sandbox if needed
-        setup_success = await self.setup_sandbox(sandbox_id)
-        if not setup_success:
-            progress.status = AgentStatus.FAILED
-            progress.error = "Failed to setup Claude Code in sandbox"
+            # Get sandbox
+            sandbox = await self._get_sandbox()
+
+            # Create task branch
+            branch = await sandbox.create_task_branch(
+                user_id=user_id,
+                task_description=task_description or prompt[:100]
+            )
+            task_id = branch.task_id
+
+            self._progress[task_id] = progress
+            self._active_branches[task_id] = branch
+
+            progress.steps_completed.append("Setup")
+            progress.status = AgentStatus.WORKING
+            progress.current_step = "Running Claude Code"
+
+            if on_progress:
+                await on_progress(f"🚀 Starting task on branch {branch.branch_name}...")
+
+            logger.info(f"Running ccr task {task_id} for user {user_id}: {prompt[:100]}...")
+
+            # Execute with heartbeat
+            result = await self._execute_with_heartbeat(
+                sandbox,
+                branch,
+                prompt,
+                on_progress
+            )
+
+            progress.steps_completed.append("Run task")
+
+            # Log result
+            logger.info(f"ccr task {task_id} exit_code={result.exit_code}, output_len={len(result.stdout)}")
+            if result.stderr:
+                logger.warning(f"ccr stderr: {result.stderr[:500]}")
+
+            # Collect metadata
+            progress.current_step = "Collecting results"
+
+            files_changed = await sandbox.get_branch_files_changed(branch)
+            todos = parse_todos_from_output(result.stdout)
+
+            progress.steps_completed.append("Collect results")
+            progress.status = AgentStatus.COMPLETED
+
+            if on_progress:
+                status_emoji = "✅" if result.exit_code == 0 else "⚠️"
+                files_str = f" ({len(files_changed)} files changed)" if files_changed else ""
+                await on_progress(f"{status_emoji} Task completed{files_str}")
+
+            return ClaudeCodeResult(
+                success=result.exit_code == 0 or bool(files_changed),
+                output=result.stdout,
+                files_changed=files_changed,
+                branch_name=branch.branch_name,
+                duration_seconds=progress.elapsed_seconds(),
+                todos=todos,
+            )
+
+        except Exception as e:
+            logger.error(f"Task failed with exception: {e}")
+
+            if on_progress:
+                await on_progress(f"❌ Task failed: {str(e)[:100]}")
+
             return ClaudeCodeResult(
                 success=False,
                 output="",
-                error=progress.error,
-                duration_seconds=progress.elapsed_seconds()
+                error=str(e),
+                branch_name=branch.branch_name if branch else None,
+                duration_seconds=0,
             )
 
-        progress.steps_completed.append("Setup")
-        progress.status = AgentStatus.WORKING
-        progress.current_step = "Running Claude Code"
-
-        if on_progress:
-            await on_progress("🚀 Starting task...")
-
-        # Run Claude Code via ccr
-        # Escape the prompt for shell
-        escaped_prompt = prompt.replace("'", "'\\''")
-
-        # Use ccr code with:
-        # -p: print mode (non-interactive, required for automation)
-        # --dangerously-skip-permissions: auto-accept tool usage (safe in sandbox)
-        # Run as 'coder' user (not root) because --dangerously-skip-permissions requires non-root
-        # Set ANTHROPIC_API_KEY to dummy value - ccr intercepts and routes to Pollinations
-        cmd = f"su - coder -c \"cd /workspace && ANTHROPIC_API_KEY=dummy ccr code -p --dangerously-skip-permissions '{escaped_prompt}'\" 2>&1"
-
-        logger.info(f"Running Claude Code in sandbox {sandbox_id}: {prompt[:100]}...")
-
-        # Execute and stream output
-        result = await self._execute_with_streaming(
-            sandbox_id,
-            cmd,
-            timeout,
-            on_progress
-        )
-
-        progress.steps_completed.append("Run task")
-
-        # Log the raw result for debugging
-        logger.info(f"ccr exit_code={result.exit_code}, stdout_len={len(result.stdout)}, stderr_len={len(result.stderr)}")
-        if result.stderr:
-            logger.warning(f"ccr stderr: {result.stderr[:500]}")
-        if result.exit_code != 0:
-            logger.warning(f"ccr failed with code {result.exit_code}, stdout tail: {result.stdout[-500:] if result.stdout else 'empty'}")
-
-        # Parse result
-        if result.exit_code != 0 and not result.stdout:
-            progress.status = AgentStatus.FAILED
-            progress.error = result.stderr or "Claude Code exited with error"
-            logger.error(f"Task failed: {progress.error}")
-            return ClaudeCodeResult(
-                success=False,
-                output=result.stdout,
-                error=progress.error,
-                duration_seconds=progress.elapsed_seconds()
-            )
-
-        # Collect metadata (files changed, commits, etc.)
-        progress.current_step = "Collecting results"
-
-        files_changed = await self._get_changed_files(sandbox_id)
-        commits = await self._get_recent_commits(sandbox_id)
-        pr_url = self._extract_pr_url(result.stdout)
-
-        # Parse todos from Claude Code output
-        todos = parse_todos_from_output(result.stdout)
-
-        progress.steps_completed.append("Collect results")
-        progress.status = AgentStatus.COMPLETED
-
-        if on_progress:
-            status_emoji = "✅" if result.exit_code == 0 else "⚠️"
-            await on_progress(f"{status_emoji} Task completed")
-
-        return ClaudeCodeResult(
-            success=result.exit_code == 0 or bool(files_changed or commits),
-            output=result.stdout,
-            files_changed=files_changed,
-            commits_made=commits,
-            pr_url=pr_url,
-            duration_seconds=progress.elapsed_seconds(),
-            todos=todos,
-        )
-
-    async def _execute_with_streaming(
+    async def _execute_with_heartbeat(
         self,
-        sandbox_id: str,
-        cmd: str,
-        timeout: int,
+        sandbox: PersistentSandbox,
+        branch: TaskBranch,
+        prompt: str,
         on_progress: Optional[ProgressCallback] = None,
     ) -> CommandResult:
         """
-        Execute command and stream output to progress callback.
+        Execute ccr with heartbeat progress updates.
 
-        For now, this runs the command and returns full output.
-        TODO: Implement true streaming by reading stdout line-by-line.
+        Sends periodic updates so Discord embed shows activity.
         """
-        # For now, just execute and return
-        # True streaming would require modifying sandbox to support it
-        result = await self.sandbox_mgr.execute(
-            sandbox_id,
-            cmd,
-            timeout=timeout
-        )
+        heartbeat_messages = [
+            "⏳ Working on the task...",
+            "🔍 Analyzing code...",
+            "💭 Thinking...",
+            "⚙️ Processing...",
+            "📝 Making changes...",
+            "🔧 Working...",
+        ]
 
-        # Update progress with output snippets
+        heartbeat_task = None
+        heartbeat_idx = 0
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
+
+        async def heartbeat_loop():
+            """Send periodic progress updates while ccr runs."""
+            nonlocal heartbeat_idx
+            while True:
+                await asyncio.sleep(self.config.heartbeat_interval)
+                if on_progress:
+                    elapsed = int(loop.time() - start_time)
+                    mins, secs = divmod(elapsed, 60)
+                    msg = heartbeat_messages[heartbeat_idx % len(heartbeat_messages)]
+                    await on_progress(f"{msg} ({mins}m {secs}s)")
+                    heartbeat_idx += 1
+
+        try:
+            # Start heartbeat task if we have a progress callback
+            if on_progress:
+                heartbeat_task = asyncio.create_task(heartbeat_loop())
+
+            # Execute ccr
+            result = await sandbox.run_ccr(branch, prompt)
+
+        finally:
+            # Cancel heartbeat when done
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
+        # Send final output snippets
         if on_progress and result.stdout:
-            # Extract key progress indicators from Claude Code output
             lines = result.stdout.split('\n')
-            for line in lines[-10:]:  # Last 10 lines
+            for line in lines[-10:]:
                 line = line.strip()
                 if line and not line.startswith('[') and len(line) < 200:
-                    # Skip noisy lines
                     if any(skip in line.lower() for skip in ['token', 'cost', 'session']):
                         continue
-                    # Send progress update
                     await on_progress(f"📝 {line[:100]}")
 
         return result
 
-    async def _get_changed_files(self, sandbox_id: str) -> list:
-        """Get list of files changed in the sandbox."""
-        result = await self.sandbox_mgr.execute(
-            sandbox_id,
-            "git diff --name-only HEAD~1 2>/dev/null || git diff --name-only",
-            timeout=10
+    async def get_branch_diff(self, task_id: str) -> str:
+        """Get the git diff for a task."""
+        branch = self._active_branches.get(task_id)
+        if not branch:
+            return ""
+
+        sandbox = await self._get_sandbox()
+        return await sandbox.get_branch_diff(branch)
+
+    async def get_files_changed(self, task_id: str) -> list[str]:
+        """Get list of files changed for a task."""
+        branch = self._active_branches.get(task_id)
+        if not branch:
+            return []
+
+        sandbox = await self._get_sandbox()
+        return await sandbox.get_branch_files_changed(branch)
+
+    async def continue_task(
+        self,
+        task_id: str,
+        prompt: str,
+        on_progress: Optional[ProgressCallback] = None,
+    ) -> ClaudeCodeResult:
+        """
+        Continue a task with additional instructions.
+
+        Uses the same branch as the original task.
+        """
+        branch = self._active_branches.get(task_id)
+        if not branch:
+            return ClaudeCodeResult(
+                success=False,
+                output="",
+                error=f"Task {task_id} not found",
+            )
+
+        sandbox = await self._get_sandbox()
+
+        if on_progress:
+            await on_progress(f"🔄 Continuing on branch {branch.branch_name}...")
+
+        result = await self._execute_with_heartbeat(
+            sandbox,
+            branch,
+            prompt,
+            on_progress
         )
 
-        if result.exit_code == 0 and result.stdout:
-            return [f.strip() for f in result.stdout.split('\n') if f.strip()]
-        return []
+        files_changed = await sandbox.get_branch_files_changed(branch)
+        todos = parse_todos_from_output(result.stdout)
 
-    async def _get_recent_commits(self, sandbox_id: str) -> list:
-        """Get recent commit messages made by Claude Code."""
-        result = await self.sandbox_mgr.execute(
-            sandbox_id,
-            "git log --oneline -5 2>/dev/null | head -5",
-            timeout=10
+        if on_progress:
+            status_emoji = "✅" if result.exit_code == 0 else "⚠️"
+            await on_progress(f"{status_emoji} Continuation completed")
+
+        return ClaudeCodeResult(
+            success=result.exit_code == 0 or bool(files_changed),
+            output=result.stdout,
+            files_changed=files_changed,
+            branch_name=branch.branch_name,
+            todos=todos,
         )
 
-        if result.exit_code == 0 and result.stdout:
-            commits = []
-            for line in result.stdout.split('\n'):
-                line = line.strip()
-                if line and 'claude' in line.lower():
-                    commits.append(line)
-            return commits
-        return []
+    async def cleanup_task(self, task_id: str):
+        """Clean up a task (delete branch)."""
+        branch = self._active_branches.pop(task_id, None)
+        self._progress.pop(task_id, None)
 
-    def _extract_pr_url(self, output: str) -> Optional[str]:
-        """Extract PR URL from Claude Code output if one was created."""
-        # Look for GitHub PR URLs
-        pr_patterns = [
-            r'https://github\.com/[^/]+/[^/]+/pull/\d+',
-            r'Pull request created: (https://[^\s]+)',
-            r'PR: (https://[^\s]+)',
+        if branch:
+            sandbox = await self._get_sandbox()
+            await sandbox.cleanup_branch(branch)
+            logger.info(f"Cleaned up task {task_id}")
+
+    async def list_active_tasks(self) -> list[dict]:
+        """List all active tasks."""
+        return [
+            {
+                "task_id": branch.task_id,
+                "branch": branch.branch_name,
+                "user_id": branch.user_id,
+                "created_at": branch.created_at.isoformat(),
+                "description": branch.description,
+            }
+            for branch in self._active_branches.values()
         ]
 
-        for pattern in pr_patterns:
-            match = re.search(pattern, output)
-            if match:
-                return match.group(1) if match.lastindex else match.group(0)
-
-        return None
-
-    async def pause_task(self, sandbox_id: str) -> bool:
-        """
-        Pause a running task.
-
-        Note: Claude Code doesn't support pause natively.
-        This cancels the current task - it can be resumed with a new prompt.
-        """
-        if sandbox_id in self._active_tasks:
-            task = self._active_tasks[sandbox_id]
-            task.cancel()
-
-            progress = self._progress.get(sandbox_id)
-            if progress:
-                progress.status = AgentStatus.PAUSED
-
-            return True
-        return False
-
-    async def send_input(self, sandbox_id: str, input_text: str) -> bool:
-        """
-        Send additional input to a running Claude Code session.
-
-        Note: With NON_INTERACTIVE_MODE, this starts a new prompt
-        in the same sandbox context.
-        """
-        # For now, just run a new ccr code command
-        # The context is maintained in the sandbox (files, git state)
-        progress = self._progress.get(sandbox_id)
-        if progress:
-            progress.current_step = f"Processing: {input_text[:50]}..."
-
-        escaped = input_text.replace("'", "'\\''")
-        cmd = f"su - coder -c \"cd /workspace && ccr code -p --dangerously-skip-permissions '{escaped}'\" 2>&1"
-
-        result = await self.sandbox_mgr.execute(
-            sandbox_id,
-            cmd,
-            timeout=self.config.task_timeout
-        )
-
-        return result.exit_code == 0
-
-    def get_progress(self, sandbox_id: str) -> Optional[TaskProgress]:
+    def get_progress(self, task_id: str) -> Optional[TaskProgress]:
         """Get current progress for a task."""
-        return self._progress.get(sandbox_id)
-
-    async def cleanup(self, sandbox_id: str):
-        """Clean up resources for a task."""
-        # Stop ccr service
-        await self.sandbox_mgr.execute(
-            sandbox_id,
-            "ccr stop 2>/dev/null || true",
-            timeout=10
-        )
-
-        # Remove from tracking
-        self._active_tasks.pop(sandbox_id, None)
-        self._progress.pop(sandbox_id, None)
+        return self._progress.get(task_id)
 
 
-# Global instance
-claude_code_agent: Optional[ClaudeCodeAgent] = None
+# =============================================================================
+# GLOBAL INSTANCE
+# =============================================================================
+
+_claude_code_agent: Optional[ClaudeCodeAgent] = None
 
 
 def get_claude_code_agent() -> ClaudeCodeAgent:
     """Get or create the global Claude Code agent instance."""
-    global claude_code_agent
-    if claude_code_agent is None:
-        # Load API key from config
-        from ...config import config as app_config
-        api_key = app_config.pollinations_token
-        if not api_key:
-            logger.warning("POLLINATIONS_TOKEN not set - ccr may fail API calls")
-        else:
-            logger.info(f"Loaded Pollinations API key: {api_key[:10]}...")
-        ccr_config = ClaudeCodeConfig(
-            api_key=api_key,
-        )
-        claude_code_agent = ClaudeCodeAgent(config=ccr_config)
-    return claude_code_agent
+    global _claude_code_agent
+    if _claude_code_agent is None:
+        _claude_code_agent = ClaudeCodeAgent()
+    return _claude_code_agent
+
+
+# Backward compatibility alias
+claude_code_agent = None  # Will be lazily initialized
+
+
+class _LazyClaudeCodeAgent:
+    """Lazy proxy for claude_code_agent."""
+    def __getattr__(self, name):
+        return getattr(get_claude_code_agent(), name)
+
+
+claude_code_agent = _LazyClaudeCodeAgent()

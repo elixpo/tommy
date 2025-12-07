@@ -1477,6 +1477,111 @@ github_manager = GitHubManager()
 # Import PR handler
 from .github_pr import tool_github_pr
 
+# Import subscription manager
+from .subscriptions import subscription_manager
+
+
+# =============================================================================
+# SUBSCRIPTION TOOL HANDLERS
+# =============================================================================
+
+async def tool_subscribe_issue(
+    issue_number: int,
+    user_id: int,
+    channel_id: int,
+    guild_id: int = None,
+) -> dict:
+    """Subscribe a user to issue notifications."""
+    # Get current issue state for tracking
+    issue = await github_graphql.get_issue_basic(issue_number)
+    initial_state = None
+    if issue and "error" not in issue:
+        initial_state = {
+            "state": issue.get("state", "open"),
+            "comments_count": issue.get("comments_count", 0),
+            "labels": issue.get("labels", []),
+        }
+
+    success = await subscription_manager.subscribe(
+        user_id=user_id,
+        issue_number=issue_number,
+        channel_id=channel_id,
+        guild_id=guild_id,
+        initial_state=initial_state,
+    )
+
+    if success:
+        title = issue.get("title", f"Issue #{issue_number}") if issue else f"Issue #{issue_number}"
+        return {
+            "success": True,
+            "message": f"✅ Subscribed to **#{issue_number}**: {title}\n\nYou'll get DM notifications when there are updates!",
+        }
+    return {
+        "success": False,
+        "message": f"❌ Failed to subscribe to #{issue_number}. Please try again.",
+    }
+
+
+async def tool_unsubscribe_issue(
+    issue_number: int,
+    user_id: int,
+) -> dict:
+    """Unsubscribe a user from issue notifications."""
+    was_subscribed = await subscription_manager.unsubscribe(
+        user_id=user_id,
+        issue_number=issue_number,
+    )
+
+    if was_subscribed:
+        return {
+            "success": True,
+            "message": f"✅ Unsubscribed from **#{issue_number}**",
+        }
+    return {
+        "success": False,
+        "message": f"You weren't subscribed to #{issue_number}",
+    }
+
+
+async def tool_unsubscribe_all(user_id: int) -> dict:
+    """Unsubscribe a user from all issue notifications."""
+    count = await subscription_manager.unsubscribe_all(user_id=user_id)
+
+    if count > 0:
+        return {
+            "success": True,
+            "message": f"✅ Unsubscribed from **{count}** issue(s)",
+        }
+    return {
+        "success": True,
+        "message": "You didn't have any active subscriptions",
+    }
+
+
+async def tool_list_subscriptions(user_id: int) -> dict:
+    """List all subscriptions for a user."""
+    subs = await subscription_manager.get_user_subscriptions(user_id=user_id)
+
+    if not subs:
+        return {
+            "success": True,
+            "message": "📭 You don't have any active subscriptions.\n\nUse `subscribe #123` to subscribe to an issue!",
+        }
+
+    lines = ["📬 **Your Subscriptions:**\n"]
+    for sub in subs:
+        issue_num = sub["issue_number"]
+        state = sub.get("last_state", "open")
+        emoji = "🟢" if state == "open" else "🔴"
+        lines.append(f"{emoji} **#{issue_num}** ({state})")
+
+    lines.append(f"\n*{len(subs)} subscription(s) total*")
+    return {
+        "success": True,
+        "message": "\n".join(lines),
+    }
+
+
 # Export consolidated tool handlers
 TOOL_HANDLERS = {
     "github_issue": tool_github_issue,
@@ -1484,4 +1589,9 @@ TOOL_HANDLERS = {
     "github_custom": tool_github_custom,
     "github_overview": tool_github_overview,
     "github_pr": tool_github_pr,
+    # Subscription handlers
+    "subscribe_issue": tool_subscribe_issue,
+    "unsubscribe_issue": tool_unsubscribe_issue,
+    "unsubscribe_all": tool_unsubscribe_all,
+    "list_subscriptions": tool_list_subscriptions,
 }

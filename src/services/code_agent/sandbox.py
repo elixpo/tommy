@@ -1,38 +1,52 @@
 """
-Docker sandbox manager for safe code execution.
+Persistent Docker sandbox for ccr code execution.
 
-Provides isolated environments for:
-- Cloning repositories
-- Running tests
-- Executing commands
-- File operations
+Architecture:
+- Single persistent container "polly_sandbox" running 24/7
+- Volume mount: data/sandbox/workspace -> /workspace in container
+- ccr service runs inside, handles multiple concurrent tasks
+- Each task creates a git branch for isolation
+- Bot AI handles all git push/PR operations (not ccr)
 
-Each sandbox is a Docker container with the repo mounted.
+The sandbox survives bot restarts via Docker's restart policy.
+All files are stored in data/sandbox/ for easy access/cleanup.
 """
 
 import asyncio
+import json
 import logging
 import os
-import uuid
 import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
-from datetime import datetime, timedelta
-
-from .session_embeddings import session_embeddings_manager
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Project root (Polli/) - dynamic, not hardcoded
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+
+# Sandbox data directory
+SANDBOX_DIR = PROJECT_ROOT / "data" / "sandbox"
+WORKSPACE_DIR = SANDBOX_DIR / "workspace"
+CCR_CONFIG_DIR = SANDBOX_DIR / "ccr_config"
+
+# Source repo for syncing (embeddings repo)
+REPO_SOURCE_DIR = PROJECT_ROOT / "data" / "repo" / "pollinations_pollinations"
+
+# Container name (persistent)
+CONTAINER_NAME = "polly_sandbox"
 
 
 @dataclass
 class SandboxConfig:
-    """Configuration for a sandbox."""
-    image: str = "node:20"  # Full Node.js image - ccr needs bash, git, build tools
-    memory_limit: str = "2g"
-    cpu_limit: float = 2.0
-    timeout: int = 300  # 5 minutes default
-    network_enabled: bool = True  # For npm install etc
+    """Configuration for the persistent sandbox."""
+    image: str = "node:20"  # Full image with bash, git, build tools
+    memory_limit: str = "4g"
+    cpu_limit: float = 4.0
+    restart_policy: str = "unless-stopped"  # Survives bot/host restarts
+    network_enabled: bool = True  # For npm install, API calls
 
 
 @dataclass
@@ -46,139 +60,111 @@ class CommandResult:
 
 
 @dataclass
-class Sandbox:
-    """A running sandbox instance."""
-    id: str
-    container_id: Optional[str] = None
-    workspace_path: Path = None
-    repo_url: Optional[str] = None
-    branch: str = "main"
+class TaskBranch:
+    """Represents a task running on a git branch."""
+    branch_name: str
+    task_id: str
+    user_id: str
     created_at: datetime = field(default_factory=datetime.utcnow)
-    config: SandboxConfig = field(default_factory=SandboxConfig)
-    _process: Optional[asyncio.subprocess.Process] = None
-
-    # User who initiated the sandbox (for destruction confirmation)
-    initiated_by: Optional[str] = None
-    initiated_source: Optional[str] = None  # "discord" or "github"
-
-    # Pending destruction confirmation
-    pending_destruction: bool = False
+    status: str = "active"  # active, completed, abandoned
+    description: str = ""
 
 
-class SandboxManager:
+class PersistentSandbox:
     """
-    Manages Docker sandboxes for code execution.
+    Manages a single persistent Docker sandbox for all ccr tasks.
 
-    Can run in two modes:
-    1. Docker mode (production) - Full isolation in containers
-    2. Local mode (development) - Direct execution with temp directories
+    Features:
+    - Single container running 24/7
+    - Volume mount for persistence (data/sandbox/workspace)
+    - Branch-based task isolation
+    - Concurrent task support (multiple ccr processes)
+    - Survives bot restarts
 
-    Supports on-demand file copy from a local reference repo (e.g., embeddings repo)
-    to avoid cloning large repos repeatedly.
+    Usage:
+        sandbox = PersistentSandbox()
+        await sandbox.ensure_running()
+
+        # Create branch for task
+        branch = await sandbox.create_task_branch("user123", "Fix bug in API")
+
+        # Run ccr on that branch
+        result = await sandbox.run_ccr(branch, "Fix the null pointer bug")
+
+        # After task, Bot AI handles push/PR
     """
 
-    def __init__(
-        self,
-        base_path: str = "/tmp/polli_sandboxes",
-        use_docker: bool = True,
-        local_repo_path: Optional[str] = None,
-    ):
-        self.base_path = Path(base_path)
-        self.base_path.mkdir(parents=True, exist_ok=True)
-        self.use_docker = use_docker
-        self.sandboxes: dict[str, Sandbox] = {}
-        self._cleanup_task: Optional[asyncio.Task] = None
+    def __init__(self, config: Optional[SandboxConfig] = None):
+        self.config = config or SandboxConfig()
+        self.active_branches: dict[str, TaskBranch] = {}
+        self._setup_directories()
 
-        # Local repo for on-demand file copy (e.g., embeddings repo)
-        self.local_repo_path: Optional[Path] = Path(local_repo_path) if local_repo_path else None
-        if self.local_repo_path and not self.local_repo_path.exists():
-            logger.warning(f"Local repo path does not exist: {local_repo_path}")
-            self.local_repo_path = None
+    def _setup_directories(self):
+        """Create necessary directories."""
+        SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
+        WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+        CCR_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Sandbox directories ready at {SANDBOX_DIR}")
 
-    async def start(self):
-        """Start the sandbox manager and cleanup task."""
-        self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
-        logger.info(f"SandboxManager started (docker={self.use_docker})")
-
-    async def stop(self):
-        """Stop the sandbox manager and clean up all sandboxes."""
-        if self._cleanup_task:
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
-
-        # Clean up all sandboxes
-        for sandbox_id in list(self.sandboxes.keys()):
-            await self.destroy(sandbox_id)
-
-        logger.info("SandboxManager stopped")
-
-    async def create(
-        self,
-        repo_url: Optional[str] = None,
-        branch: str = "main",
-        config: Optional[SandboxConfig] = None,
-        initiated_by: Optional[str] = None,
-        initiated_source: Optional[str] = None,
-    ) -> Sandbox:
+    async def ensure_running(self) -> bool:
         """
-        Create a new sandbox.
+        Ensure the sandbox container is running.
 
-        Args:
-            repo_url: Git repository URL to clone (optional)
-            branch: Branch to checkout
-            config: Sandbox configuration
-            initiated_by: Username of who started this sandbox
-            initiated_source: Source platform ("discord" or "github")
+        - If container exists and running: use it
+        - If container exists but stopped: start it
+        - If container doesn't exist: create it
 
-        Returns:
-            Sandbox instance
+        Returns True if sandbox is ready.
         """
-        sandbox_id = str(uuid.uuid4())[:8]
-        workspace = self.base_path / sandbox_id
-        workspace.mkdir(parents=True, exist_ok=True)
+        # Check if container exists
+        check_result = await self._run_host_command([
+            "docker", "inspect", CONTAINER_NAME
+        ])
 
-        sandbox = Sandbox(
-            id=sandbox_id,
-            workspace_path=workspace,
-            repo_url=repo_url,
-            branch=branch,
-            config=config or SandboxConfig(),
-            initiated_by=initiated_by,
-            initiated_source=initiated_source,
-        )
+        if check_result.exit_code == 0:
+            # Container exists, check if running
+            status_result = await self._run_host_command([
+                "docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME
+            ])
 
-        if self.use_docker:
-            await self._create_docker_sandbox(sandbox)
+            if "true" in status_result.stdout.lower():
+                logger.info(f"Sandbox {CONTAINER_NAME} already running")
+                return True
+            else:
+                # Start stopped container
+                logger.info(f"Starting stopped sandbox {CONTAINER_NAME}")
+                start_result = await self._run_host_command([
+                    "docker", "start", CONTAINER_NAME
+                ])
+                if start_result.exit_code == 0:
+                    await self._ensure_ccr_running()
+                    return True
+                else:
+                    logger.error(f"Failed to start container: {start_result.stderr}")
+                    return False
         else:
-            await self._create_local_sandbox(sandbox)
+            # Container doesn't exist, create it
+            return await self._create_container()
 
-        # Add to sandboxes BEFORE clone so execute() can find it
-        self.sandboxes[sandbox_id] = sandbox
+    async def _create_container(self) -> bool:
+        """Create the persistent sandbox container."""
+        logger.info(f"Creating persistent sandbox {CONTAINER_NAME}")
 
-        # Clone repo if provided
-        if repo_url:
-            await self._clone_repo(sandbox, repo_url, branch)
+        config = self.config
 
-        # Create session embeddings for this sandbox
-        await session_embeddings_manager.create_session(sandbox_id)
-        logger.info(f"Created sandbox {sandbox_id} for {repo_url or 'empty'} (by {initiated_by})")
-
-        return sandbox
-
-    async def _create_docker_sandbox(self, sandbox: Sandbox):
-        """Create Docker container for sandbox."""
-        config = sandbox.config
+        # Convert paths for Docker (handle Windows paths)
+        workspace_mount = str(WORKSPACE_DIR.resolve()).replace("\\", "/")
+        ccr_config_mount = str(CCR_CONFIG_DIR.resolve()).replace("\\", "/")
 
         cmd = [
             "docker", "run", "-d",
-            "--name", f"polli_sandbox_{sandbox.id}",
-            "-v", f"{sandbox.workspace_path}:/workspace",
+            "--name", CONTAINER_NAME,
+            "-v", f"{workspace_mount}:/workspace",
+            "-v", f"{ccr_config_mount}:/home/coder/.claude-code-router",
             "-w", "/workspace",
             "--memory", config.memory_limit,
             "--cpus", str(config.cpu_limit),
+            "--restart", config.restart_policy,
         ]
 
         if not config.network_enabled:
@@ -188,78 +174,484 @@ class SandboxManager:
 
         result = await self._run_host_command(cmd)
         if result.exit_code != 0:
-            raise RuntimeError(f"Failed to create container: {result.stderr}")
+            logger.error(f"Failed to create container: {result.stderr}")
+            return False
 
-        sandbox.container_id = result.stdout.strip()
+        logger.info(f"Container created: {result.stdout.strip()[:12]}")
 
-        # Install git and ca-certificates (ensure they're available)
-        install_git = await self._run_host_command([
-            "docker", "exec", f"polli_sandbox_{sandbox.id}",
-            "sh", "-c", "apt-get update && apt-get install -y git ca-certificates --no-install-recommends && rm -rf /var/lib/apt/lists/*"
-        ], timeout=120)
+        # Initial setup
+        await self._initial_setup()
 
-        if install_git.exit_code != 0:
-            logger.warning(f"Failed to install git in container: {install_git.stderr}")
+        return True
 
-    async def _create_local_sandbox(self, sandbox: Sandbox):
-        """Create local sandbox (no Docker)."""
-        # Just use the workspace directory
-        pass
+    async def _initial_setup(self):
+        """One-time setup when container is first created."""
+        logger.info("Running initial sandbox setup...")
 
-    async def _clone_repo(self, sandbox: Sandbox, repo_url: str, branch: str):
+        # Create non-root user (ccr requires non-root for --dangerously-skip-permissions)
+        await self.execute("useradd -m coder 2>/dev/null || true")
+
+        # Install ccr
+        logger.info("Installing ccr (this may take a minute)...")
+        install_result = await self.execute(
+            "npm install -g @anthropic-ai/claude-code @musistudio/claude-code-router 2>&1",
+            timeout=300
+        )
+        if install_result.exit_code != 0:
+            logger.error(f"Failed to install ccr: {install_result.stderr}")
+        else:
+            logger.info("ccr installed successfully")
+
+        # Setup permissions
+        await self.execute("chown -R coder:coder /home/coder")
+        await self.execute("chown -R coder:coder /workspace 2>/dev/null || true")
+
+        # Fix temp file permissions for ccr
+        await self.execute("touch /tmp/claude-code-reference-count.txt && chmod 666 /tmp/claude-code-reference-count.txt")
+
+        # Setup git config (for both root and coder user)
+        await self.execute("git config --global user.email 'polly@pollinations.ai'")
+        await self.execute("git config --global user.name 'Polly Bot'")
+        await self.execute("git config --global --add safe.directory '*'")
+        # Also set for coder user
+        await self.execute("su - coder -c \"git config --global user.email 'polly@pollinations.ai'\"")
+        await self.execute("su - coder -c \"git config --global user.name 'Polly Bot'\"")
+        await self.execute("su - coder -c \"git config --global --add safe.directory '*'\"")
+
+        # Write ccr config
+        await self._write_ccr_config()
+
+        # Start ccr service
+        await self._ensure_ccr_running()
+
+        logger.info("Initial setup complete")
+
+    async def _write_ccr_config(self):
+        """Write ccr configuration file."""
+        from ...config import config as app_config
+
+        ccr_config = {
+            "LOG": True,
+            "LOG_LEVEL": "info",
+            "CLAUDE_PATH": "",
+            "HOST": "127.0.0.1",
+            "PORT": 3456,
+            "APIKEY": "",
+            "API_TIMEOUT_MS": "600000",  # 10 minutes
+            "PROXY_URL": "",
+            "transformers": [],
+            "Providers": [
+                {
+                    "name": "main",
+                    "api_base_url": "https://gen.pollinations.ai/v1/chat/completions",
+                    "api_key": app_config.pollinations_token if hasattr(app_config, 'pollinations_token') else "",
+                    "models": [
+                        "openai-large",
+                        "gemini-large",
+                        "gemini",
+                        "claude-large",
+                        "perplexity-fast"
+                    ],
+                    "transformer": {
+                        "use": ["customparams"]
+                    }
+                }
+            ],
+            "StatusLine": {
+                "enabled": True,
+                "currentStyle": "default",
+                "default": {"modules": []},
+                "powerline": {"modules": []}
+            },
+            "Router": {
+                "default": "main,claude-large",
+                "background": "main,gemini",
+                "think": "",
+                "longContext": "",
+                "longContextThreshold": 60000,
+                "webSearch": "main,perplexity-fast",
+                "image": ""
+            },
+            "CUSTOM_ROUTER_PATH": ""
+        }
+
+        config_path = CCR_CONFIG_DIR / "config.json"
+        config_path.write_text(json.dumps(ccr_config, indent=2))
+
+        # Also copy to container's coder home (in case volume mount timing issue)
+        await self.execute(f"mkdir -p /home/coder/.claude-code-router")
+        await self.execute(f"chown -R coder:coder /home/coder/.claude-code-router")
+
+        logger.info(f"ccr config written to {config_path}")
+
+    async def _ensure_ccr_running(self):
+        """Ensure ccr service is running."""
+        # Start ccr as coder user
+        await self.execute("su - coder -c 'ccr start' 2>&1", timeout=30)
+        await asyncio.sleep(2)
+
+        # Verify
+        status = await self.execute("su - coder -c 'ccr status' 2>&1")
+        if "running" in status.stdout.lower():
+            logger.info("ccr service is running")
+        else:
+            logger.warning(f"ccr status unclear: {status.stdout}")
+
+    async def sync_repo(self, force: bool = False) -> bool:
         """
-        Setup repository in sandbox.
+        Sync the pollinations repo from data/repo to workspace.
 
-        First tries to copy from local cache on HOST (fast), falls back to git clone.
-        Local cache is at /root/Polly/data/repo/{owner}_{repo}/
+        Only syncs if:
+        - Workspace is empty, OR
+        - force=True
+
+        The source repo in data/repo/ is kept up-to-date by the embeddings system.
         """
-        # Try to use local repo cache first (much faster than cloning 600MB+)
-        if "github.com" in repo_url:
-            # Extract owner/repo from URL
-            # https://github.com/owner/repo.git -> owner_repo
-            parts = repo_url.rstrip("/").rstrip(".git").split("/")
-            if len(parts) >= 2:
-                owner, repo_name = parts[-2], parts[-1]
-                local_cache = Path(f"/root/Polly/data/repo/{owner}_{repo_name}")
+        workspace_repo = WORKSPACE_DIR / "pollinations"
 
-                # Check if local cache exists on HOST and use docker cp to copy to container
-                if local_cache.exists() and local_cache.is_dir():
-                    logger.info(f"Found local cache at {local_cache}, copying to sandbox {sandbox.id}")
+        if workspace_repo.exists() and not force:
+            logger.info("Workspace repo already exists, skipping sync")
+            return True
 
-                    # Use docker cp to copy from HOST to container (not execute inside container)
-                    copy_result = await self._run_host_command([
-                        "docker", "cp",
-                        f"{local_cache}/.",
-                        f"polli_sandbox_{sandbox.id}:/workspace/"
-                    ], timeout=120)
+        if not REPO_SOURCE_DIR.exists():
+            logger.error(f"Source repo not found at {REPO_SOURCE_DIR}")
+            return False
 
-                    if copy_result.exit_code == 0:
-                        # Setup git and checkout branch inside container
-                        setup_cmd = f"cd /workspace && git checkout {branch} 2>/dev/null || git checkout -b {branch}"
-                        await self.execute(sandbox.id, setup_cmd, timeout=30)
-                        logger.info(f"Copied {owner}/{repo_name} from local cache to sandbox {sandbox.id}")
-                        return
-                    else:
-                        logger.warning(f"docker cp failed: {copy_result.stderr}, falling back to git clone")
+        logger.info(f"Syncing repo from {REPO_SOURCE_DIR} to workspace...")
 
-        # Fallback to git clone if local cache not available
-        token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-        if token and "github.com" in repo_url:
-            if repo_url.startswith("https://"):
-                repo_url = repo_url.replace("https://", f"https://x-access-token:{token}@")
+        # Clear existing workspace repo if force sync
+        if workspace_repo.exists() and force:
+            shutil.rmtree(workspace_repo, ignore_errors=True)
 
-        clone_cmd = f"git clone --depth 1 --branch {branch} {repo_url} ."
-        result = await self.execute(sandbox.id, clone_cmd, timeout=120)
+        # Copy repo to workspace
+        try:
+            shutil.copytree(REPO_SOURCE_DIR, workspace_repo, dirs_exist_ok=True)
+            logger.info("Repo copied to workspace")
+        except Exception as e:
+            logger.error(f"Failed to copy repo: {e}")
+            return False
+
+        # Ensure proper permissions in container
+        await self.execute("chown -R coder:coder /workspace/pollinations 2>/dev/null || true")
+
+        # Reset to main branch
+        await self.execute(
+            "cd /workspace/pollinations && git checkout main 2>/dev/null || true",
+            as_coder=True
+        )
+
+        return True
+
+    async def create_task_branch(
+        self,
+        user_id: str,
+        task_description: str,
+        task_id: Optional[str] = None
+    ) -> TaskBranch:
+        """
+        Create a new git branch for a task.
+
+        Each task gets its own branch for isolation.
+        Multiple users can work concurrently on different branches.
+        """
+        import uuid
+
+        task_id = task_id or str(uuid.uuid4())[:8]
+        branch_name = f"task/{task_id}"
+
+        # Ensure we're on main first
+        await self.execute(
+            "cd /workspace/pollinations && git checkout main 2>/dev/null || true",
+            as_coder=True
+        )
+
+        # Create and checkout new branch
+        result = await self.execute(
+            f"cd /workspace/pollinations && git checkout -b {branch_name}",
+            as_coder=True
+        )
 
         if result.exit_code != 0:
-            # Try without branch (might not exist)
-            clone_cmd = f"git clone --depth 1 {repo_url} . && git checkout -b {branch}"
-            result = await self.execute(sandbox.id, clone_cmd, timeout=120)
+            # Branch might exist, try checking it out
+            result = await self.execute(
+                f"cd /workspace/pollinations && git checkout {branch_name}",
+                as_coder=True
+            )
 
-        if result.exit_code != 0:
-            raise RuntimeError(f"Failed to clone repo: {result.stderr}")
+        branch = TaskBranch(
+            branch_name=branch_name,
+            task_id=task_id,
+            user_id=user_id,
+            description=task_description
+        )
 
-        logger.info(f"Cloned {repo_url}:{branch} into sandbox {sandbox.id}")
+        self.active_branches[task_id] = branch
+        logger.info(f"Created task branch {branch_name} for user {user_id}")
+
+        return branch
+
+    async def run_ccr(
+        self,
+        branch: TaskBranch,
+        prompt: str,
+    ) -> CommandResult:
+        """
+        Run ccr on a specific task branch.
+
+        Args:
+            branch: TaskBranch to work on
+            prompt: The task prompt for ccr
+
+        Returns:
+            CommandResult with ccr output
+        """
+        # Ensure we're on the right branch
+        await self.execute(
+            f"cd /workspace/pollinations && git checkout {branch.branch_name}",
+            as_coder=True
+        )
+
+        # Escape prompt for shell
+        escaped_prompt = prompt.replace("'", "'\\''").replace('"', '\\"')
+
+        # Run ccr
+        # -p: print mode (non-interactive)
+        # --dangerously-skip-permissions: auto-accept (safe in sandbox)
+        cmd = f'cd /workspace/pollinations && ANTHROPIC_API_KEY=dummy ccr code -p --dangerously-skip-permissions "{escaped_prompt}"'
+
+        logger.info(f"Running ccr on branch {branch.branch_name}: {prompt[:100]}...")
+
+        result = await self.execute(cmd, as_coder=True, timeout=None)  # No timeout
+
+        return result
+
+    async def get_branch_diff(self, branch: TaskBranch) -> str:
+        """Get the git diff for a task branch."""
+        result = await self.execute(
+            f"cd /workspace/pollinations && git diff main...{branch.branch_name}",
+            as_coder=True
+        )
+        return result.stdout
+
+    async def get_branch_files_changed(self, branch: TaskBranch) -> list[str]:
+        """Get list of files changed on a task branch."""
+        result = await self.execute(
+            f"cd /workspace/pollinations && git diff --name-only main...{branch.branch_name}",
+            as_coder=True
+        )
+        if result.exit_code == 0 and result.stdout:
+            return [f.strip() for f in result.stdout.split('\n') if f.strip()]
+        return []
+
+    async def cleanup_branch(self, branch: TaskBranch):
+        """Delete a task branch after completion/abandonment."""
+        # Switch to main first
+        await self.execute(
+            "cd /workspace/pollinations && git checkout main",
+            as_coder=True
+        )
+
+        # Delete the branch
+        await self.execute(
+            f"cd /workspace/pollinations && git branch -D {branch.branch_name}",
+            as_coder=True
+        )
+
+        # Remove from tracking
+        self.active_branches.pop(branch.task_id, None)
+
+        logger.info(f"Cleaned up branch {branch.branch_name}")
+
+    async def list_branches(self) -> list[str]:
+        """List all task branches."""
+        result = await self.execute(
+            "cd /workspace/pollinations && git branch --list 'task/*'",
+            as_coder=True
+        )
+        if result.exit_code == 0 and result.stdout:
+            return [b.strip().lstrip('* ') for b in result.stdout.split('\n') if b.strip()]
+        return []
+
+    async def execute(
+        self,
+        command: str,
+        timeout: Optional[int] = 300,
+        as_coder: bool = False,
+    ) -> CommandResult:
+        """
+        Execute a command in the sandbox container.
+
+        Args:
+            command: Command to run
+            timeout: Timeout in seconds (None for no timeout)
+            as_coder: Run as 'coder' user instead of root
+
+        Returns:
+            CommandResult with output
+        """
+        if as_coder:
+            command = f"su - coder -c '{command}'"
+
+        cmd = ["docker", "exec", CONTAINER_NAME, "sh", "-c", command]
+
+        return await self._run_host_command(cmd, timeout)
+
+    async def _run_host_command(
+        self,
+        cmd: list[str],
+        timeout: Optional[int] = 60
+    ) -> CommandResult:
+        """Run a command on the host system."""
+        start_time = asyncio.get_event_loop().time()
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            if timeout:
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(),
+                        timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    return CommandResult(
+                        exit_code=-1,
+                        stdout="",
+                        stderr=f"Command timed out after {timeout}s",
+                        timed_out=True,
+                        duration=asyncio.get_event_loop().time() - start_time
+                    )
+            else:
+                # No timeout
+                stdout, stderr = await proc.communicate()
+
+            return CommandResult(
+                exit_code=proc.returncode or 0,
+                stdout=stdout.decode(errors="replace"),
+                stderr=stderr.decode(errors="replace"),
+                duration=asyncio.get_event_loop().time() - start_time
+            )
+
+        except Exception as e:
+            return CommandResult(
+                exit_code=1,
+                stdout="",
+                stderr=str(e),
+                duration=asyncio.get_event_loop().time() - start_time
+            )
+
+    async def stop(self):
+        """Stop the sandbox container (for maintenance)."""
+        await self._run_host_command(["docker", "stop", CONTAINER_NAME])
+        logger.info(f"Stopped sandbox {CONTAINER_NAME}")
+
+    async def destroy(self):
+        """Completely remove the sandbox container and data."""
+        await self._run_host_command(["docker", "stop", CONTAINER_NAME])
+        await self._run_host_command(["docker", "rm", CONTAINER_NAME])
+
+        # Optionally clean workspace (uncomment if needed)
+        # if WORKSPACE_DIR.exists():
+        #     shutil.rmtree(WORKSPACE_DIR, ignore_errors=True)
+
+        logger.info(f"Destroyed sandbox {CONTAINER_NAME}")
+
+    async def is_running(self) -> bool:
+        """Check if sandbox container is running."""
+        result = await self._run_host_command([
+            "docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME
+        ])
+        return "true" in result.stdout.lower()
+
+    def get_workspace_path(self) -> Path:
+        """Get the host path to workspace (for direct file access)."""
+        return WORKSPACE_DIR
+
+    def get_repo_path(self) -> Path:
+        """Get the host path to the pollinations repo in workspace."""
+        return WORKSPACE_DIR / "pollinations"
+
+
+# =============================================================================
+# BACKWARD COMPATIBILITY
+# =============================================================================
+
+# Keep old classes for any code that might reference them
+@dataclass
+class Sandbox:
+    """Legacy sandbox class - now uses PersistentSandbox internally."""
+    id: str
+    container_id: Optional[str] = None
+    workspace_path: Path = None
+    repo_url: Optional[str] = None
+    branch: str = "main"
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    config: SandboxConfig = field(default_factory=SandboxConfig)
+    initiated_by: Optional[str] = None
+    initiated_source: Optional[str] = None
+    pending_destruction: bool = False
+
+
+class SandboxManager:
+    """
+    Legacy SandboxManager - wraps PersistentSandbox for backward compatibility.
+
+    New code should use PersistentSandbox directly.
+    """
+
+    def __init__(self, **kwargs):
+        self._persistent = PersistentSandbox()
+        self.sandboxes: dict[str, Sandbox] = {}
+        self.use_docker = True
+
+    async def start(self):
+        """Start the sandbox manager."""
+        await self._persistent.ensure_running()
+        await self._persistent.sync_repo()
+        logger.info("SandboxManager started (persistent mode)")
+
+    async def stop(self):
+        """Stop the sandbox manager."""
+        # Don't stop container - it's persistent!
+        logger.info("SandboxManager stopped (container still running)")
+
+    async def create(
+        self,
+        repo_url: Optional[str] = None,
+        branch: str = "main",
+        config: Optional[SandboxConfig] = None,
+        initiated_by: Optional[str] = None,
+        initiated_source: Optional[str] = None,
+    ) -> Sandbox:
+        """Create a sandbox (actually creates a task branch in persistent sandbox)."""
+        import uuid
+        sandbox_id = str(uuid.uuid4())[:8]
+
+        # Create task branch
+        task_branch = await self._persistent.create_task_branch(
+            user_id=initiated_by or "unknown",
+            task_description=f"Task from {initiated_source or 'unknown'}",
+            task_id=sandbox_id
+        )
+
+        sandbox = Sandbox(
+            id=sandbox_id,
+            container_id=CONTAINER_NAME,
+            workspace_path=self._persistent.get_repo_path(),
+            repo_url=repo_url,
+            branch=task_branch.branch_name,
+            config=config or SandboxConfig(),
+            initiated_by=initiated_by,
+            initiated_source=initiated_source,
+        )
+
+        self.sandboxes[sandbox_id] = sandbox
+        return sandbox
 
     async def execute(
         self,
@@ -268,417 +660,116 @@ class SandboxManager:
         timeout: Optional[int] = None,
         env: Optional[dict] = None,
     ) -> CommandResult:
-        """
-        Execute a command in the sandbox.
-
-        Args:
-            sandbox_id: Sandbox ID
-            command: Command to execute
-            timeout: Timeout in seconds (default from config)
-            env: Additional environment variables
-
-        Returns:
-            CommandResult with output and exit code
-        """
+        """Execute a command in the sandbox."""
         sandbox = self.sandboxes.get(sandbox_id)
-        if not sandbox:
-            return CommandResult(
-                exit_code=1,
-                stdout="",
-                stderr=f"Sandbox {sandbox_id} not found",
-            )
 
-        timeout = timeout or sandbox.config.timeout
-        start_time = asyncio.get_event_loop().time()
-
-        if self.use_docker:
-            result = await self._execute_docker(sandbox, command, timeout, env)
-        else:
-            result = await self._execute_local(sandbox, command, timeout, env)
-
-        result.duration = asyncio.get_event_loop().time() - start_time
-        return result
-
-    async def _execute_docker(
-        self,
-        sandbox: Sandbox,
-        command: str,
-        timeout: int,
-        env: Optional[dict],
-    ) -> CommandResult:
-        """Execute command in Docker container."""
-        cmd = ["docker", "exec"]
-
+        # Add env vars to command if provided
         if env:
-            for key, value in env.items():
-                cmd.extend(["-e", f"{key}={value}"])
+            env_str = " ".join(f"{k}={v}" for k, v in env.items())
+            command = f"{env_str} {command}"
 
-        cmd.extend([f"polli_sandbox_{sandbox.id}", "sh", "-c", command])
-
-        return await self._run_host_command(cmd, timeout)
-
-    async def _execute_local(
-        self,
-        sandbox: Sandbox,
-        command: str,
-        timeout: int,
-        env: Optional[dict],
-    ) -> CommandResult:
-        """Execute command locally in workspace directory."""
-        full_env = os.environ.copy()
-        if env:
-            full_env.update(env)
-
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=sandbox.workspace_path,
-                env=full_env,
+        # If we have a sandbox, work on its branch
+        if sandbox and sandbox.branch != "main":
+            # Ensure we're on the right branch
+            await self._persistent.execute(
+                f"cd /workspace/pollinations && git checkout {sandbox.branch} 2>/dev/null || true",
+                as_coder=True
             )
 
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout
-                )
-                return CommandResult(
-                    exit_code=proc.returncode or 0,
-                    stdout=stdout.decode(errors="replace"),
-                    stderr=stderr.decode(errors="replace"),
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                return CommandResult(
-                    exit_code=-1,
-                    stdout="",
-                    stderr=f"Command timed out after {timeout}s",
-                    timed_out=True,
-                )
-
-        except Exception as e:
-            return CommandResult(
-                exit_code=1,
-                stdout="",
-                stderr=str(e),
-            )
-
-    async def _run_host_command(self, cmd: list[str], timeout: int = 60) -> CommandResult:
-        """Run a command on the host system."""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout
-                )
-                return CommandResult(
-                    exit_code=proc.returncode or 0,
-                    stdout=stdout.decode(errors="replace"),
-                    stderr=stderr.decode(errors="replace"),
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                return CommandResult(
-                    exit_code=-1,
-                    stdout="",
-                    stderr=f"Command timed out after {timeout}s",
-                    timed_out=True,
-                )
-
-        except Exception as e:
-            return CommandResult(
-                exit_code=1,
-                stdout="",
-                stderr=str(e),
-            )
-
-    async def read_file(self, sandbox_id: str, path: str) -> str:
-        """
-        Read a file from the sandbox, falling back to local repo if not found.
-
-        This allows the agent to read files without copying them first.
-        """
-        sandbox = self.sandboxes.get(sandbox_id)
-        if not sandbox:
-            raise ValueError(f"Sandbox {sandbox_id} not found")
-
-        file_path = sandbox.workspace_path / path.lstrip("/")
-
-        # Try sandbox first
-        if file_path.exists():
-            return file_path.read_text()
-
-        # Fallback to local repo (read-only)
-        if self.local_repo_path:
-            local_file = self.local_repo_path / path.lstrip("/")
-            if local_file.exists():
-                return local_file.read_text()
-
-        raise FileNotFoundError(f"File not found: {path}")
-
-    async def write_file(self, sandbox_id: str, path: str, content: str):
-        """
-        Write a file to the sandbox.
-
-        If the file doesn't exist in sandbox but exists in local repo,
-        the directory structure is auto-copied to preserve git context.
-
-        Also automatically indexes the file in session embeddings.
-        """
-        sandbox = self.sandboxes.get(sandbox_id)
-        if not sandbox:
-            raise ValueError(f"Sandbox {sandbox_id} not found")
-
-        file_path = sandbox.workspace_path / path.lstrip("/")
-
-        # Auto-copy from local repo if file doesn't exist in sandbox
-        if not file_path.exists() and self.local_repo_path:
-            await self._ensure_file_context(sandbox, path)
-
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content)
-
-        # Index in session embeddings (async, non-blocking)
-        # Only index code files
-        code_extensions = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".c", ".cpp", ".h"}
-        if Path(path).suffix.lower() in code_extensions:
-            try:
-                await session_embeddings_manager.index_file(sandbox_id, path, content)
-            except Exception as e:
-                logger.warning(f"Failed to index {path} in session embeddings: {e}")
-
-    async def _ensure_file_context(self, sandbox: Sandbox, path: str):
-        """
-        Copy file and necessary context from local repo to sandbox.
-
-        Copies the file's parent directory to preserve sibling files
-        that might be needed for imports/context.
-        """
-        if not self.local_repo_path:
-            return
-
-        local_file = self.local_repo_path / path.lstrip("/")
-        if not local_file.exists():
-            return
-
-        # Copy the parent directory to preserve module context
-        local_parent = local_file.parent
-        sandbox_parent = sandbox.workspace_path / local_parent.relative_to(self.local_repo_path)
-
-        if not sandbox_parent.exists():
-            sandbox_parent.mkdir(parents=True, exist_ok=True)
-
-            # Copy sibling files (same directory)
-            for item in local_parent.iterdir():
-                if item.is_file():
-                    dest = sandbox_parent / item.name
-                    shutil.copy2(item, dest)
-                    logger.debug(f"Auto-copied {item.name} to sandbox")
-
-        logger.info(f"Auto-copied context for {path} to sandbox {sandbox.id}")
-
-    async def list_files(self, sandbox_id: str, path: str = ".", pattern: str = "*") -> list[str]:
-        """
-        List files in sandbox directory, merging with local repo.
-
-        Files in sandbox take precedence over local repo files.
-        """
-        sandbox = self.sandboxes.get(sandbox_id)
-        if not sandbox:
-            raise ValueError(f"Sandbox {sandbox_id} not found")
-
-        files = set()
-
-        # List from sandbox
-        sandbox_dir = sandbox.workspace_path / path.lstrip("/")
-        if sandbox_dir.exists():
-            for item in sandbox_dir.rglob(pattern):
-                if item.is_file():
-                    files.add(str(item.relative_to(sandbox.workspace_path)))
-
-        # Also list from local repo (if available)
-        if self.local_repo_path:
-            local_dir = self.local_repo_path / path.lstrip("/")
-            if local_dir.exists():
-                for item in local_dir.rglob(pattern):
-                    if item.is_file():
-                        files.add(str(item.relative_to(self.local_repo_path)))
-
-        return sorted(files)[:100]  # Limit to 100 files
+        return await self._persistent.execute(command, timeout=timeout, as_coder=True)
 
     async def destroy(self, sandbox_id: str, force: bool = False):
-        """
-        Destroy a sandbox and clean up resources.
-
-        Args:
-            sandbox_id: ID of sandbox to destroy
-            force: If True, skip confirmation check
-        """
-        sandbox = self.sandboxes.get(sandbox_id)
-        if not sandbox:
-            return
-
-        # Check if pending confirmation (unless forced)
-        if sandbox.pending_destruction and not force:
-            logger.info(f"Sandbox {sandbox_id} already pending destruction confirmation")
-            return
-
-        # Remove from tracking
-        self.sandboxes.pop(sandbox_id, None)
-
-        if self.use_docker and sandbox.container_id:
-            # Stop and remove container
-            await self._run_host_command(["docker", "stop", f"polli_sandbox_{sandbox.id}"])
-            await self._run_host_command(["docker", "rm", f"polli_sandbox_{sandbox.id}"])
-
-        # Remove workspace directory
-        if sandbox.workspace_path.exists():
-            shutil.rmtree(sandbox.workspace_path, ignore_errors=True)
-
-        # Clean up session embeddings
-        await session_embeddings_manager.destroy_session(sandbox_id)
-
-        logger.info(f"Destroyed sandbox {sandbox_id}")
-
-    async def request_destruction(self, sandbox_id: str) -> dict:
-        """
-        Request sandbox destruction (pending user confirmation).
-
-        Returns sandbox info for confirmation message.
-        """
-        sandbox = self.sandboxes.get(sandbox_id)
-        if not sandbox:
-            return {"error": "Sandbox not found"}
-
-        sandbox.pending_destruction = True
-
-        # Get session stats for user info
-        session = session_embeddings_manager.get_session(sandbox_id)
-        session_stats = session.get_stats() if session else {}
-
-        return {
-            "sandbox_id": sandbox_id,
-            "initiated_by": sandbox.initiated_by,
-            "initiated_source": sandbox.initiated_source,
-            "created_at": sandbox.created_at.isoformat(),
-            "repo_url": sandbox.repo_url,
-            "files_modified": session_stats.get("files_indexed", 0),
-            "chunks_indexed": session_stats.get("total_chunks", 0),
-        }
-
-    async def confirm_destruction(self, sandbox_id: str, confirmed_by: str) -> bool:
-        """
-        Confirm sandbox destruction by authorized user.
-
-        Only the user who initiated the sandbox can confirm destruction.
-        """
-        sandbox = self.sandboxes.get(sandbox_id)
-        if not sandbox:
-            return False
-
-        # Check authorization
-        if sandbox.initiated_by and sandbox.initiated_by.lower() != confirmed_by.lower():
-            logger.warning(
-                f"Unauthorized destruction attempt: {confirmed_by} tried to destroy "
-                f"sandbox {sandbox_id} owned by {sandbox.initiated_by}"
-            )
-            return False
-
-        await self.destroy(sandbox_id, force=True)
-        return True
-
-    async def cancel_destruction(self, sandbox_id: str):
-        """Cancel pending sandbox destruction."""
-        sandbox = self.sandboxes.get(sandbox_id)
-        if sandbox:
-            sandbox.pending_destruction = False
-            logger.info(f"Cancelled destruction of sandbox {sandbox_id}")
-
-    async def _periodic_cleanup(self):
-        """Periodically clean up old sandboxes."""
-        while True:
-            try:
-                await asyncio.sleep(300)  # Every 5 minutes
-
-                now = datetime.utcnow()
-                max_age = timedelta(hours=1)
-
-                for sandbox_id, sandbox in list(self.sandboxes.items()):
-                    if now - sandbox.created_at > max_age:
-                        logger.info(f"Auto-cleaning old sandbox {sandbox_id}")
-                        await self.destroy(sandbox_id)
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in sandbox cleanup: {e}")
+        """Destroy a sandbox (cleans up task branch)."""
+        sandbox = self.sandboxes.pop(sandbox_id, None)
+        if sandbox and sandbox.branch.startswith("task/"):
+            # Clean up the branch
+            task_id = sandbox.branch.replace("task/", "")
+            branch = self._persistent.active_branches.get(task_id)
+            if branch:
+                await self._persistent.cleanup_branch(branch)
 
     def get_workspace_path(self, sandbox_id: str) -> Optional[Path]:
-        """Get the workspace path for a sandbox."""
+        """Get workspace path for a sandbox."""
+        return self._persistent.get_repo_path()
+
+    async def read_file(self, sandbox_id: str, file_path: str) -> str:
+        """Read a file from the sandbox workspace."""
         sandbox = self.sandboxes.get(sandbox_id)
-        return sandbox.workspace_path if sandbox else None
+        if not sandbox:
+            raise FileNotFoundError(f"Sandbox {sandbox_id} not found")
 
-    async def search_code(
-        self,
-        sandbox_id: str,
-        query: str,
-        top_k: int = 10,
-        include_global: bool = True,
-    ) -> list[dict]:
-        """
-        Search code using session embeddings (and optionally global).
+        # Ensure we're on the right branch
+        if sandbox.branch != "main":
+            await self._persistent.execute(
+                f"cd /workspace/pollinations && git checkout {sandbox.branch} 2>/dev/null || true",
+                as_coder=True
+            )
 
-        Args:
-            sandbox_id: Sandbox ID
-            query: Search query
-            top_k: Number of results
-            include_global: Whether to also search global repo embeddings
+        # Read the file
+        result = await self._persistent.execute(
+            f"cat /workspace/pollinations/{file_path}",
+            as_coder=True
+        )
 
-        Returns:
-            List of matching code chunks with file paths and similarity scores
-        """
-        if include_global:
-            return await session_embeddings_manager.search_combined(sandbox_id, query, top_k)
-        else:
-            return await session_embeddings_manager.search_session(sandbox_id, query, top_k)
+        if result.exit_code != 0:
+            raise FileNotFoundError(f"File not found: {file_path}")
 
-    def get_session_stats(self, sandbox_id: str) -> dict:
-        """Get session embedding stats for a sandbox."""
-        session = session_embeddings_manager.get_session(sandbox_id)
-        if session:
-            return session.get_stats()
-        return {"error": "No session found"}
+        return result.stdout
+
+    async def write_file(self, sandbox_id: str, file_path: str, content: str):
+        """Write a file to the sandbox workspace."""
+        sandbox = self.sandboxes.get(sandbox_id)
+        if not sandbox:
+            raise FileNotFoundError(f"Sandbox {sandbox_id} not found")
+
+        # Ensure we're on the right branch
+        if sandbox.branch != "main":
+            await self._persistent.execute(
+                f"cd /workspace/pollinations && git checkout {sandbox.branch} 2>/dev/null || true",
+                as_coder=True
+            )
+
+        # Write to a temp file first, then move (handles special chars)
+        import base64
+        encoded = base64.b64encode(content.encode()).decode()
+        result = await self._persistent.execute(
+            f"echo '{encoded}' | base64 -d > /workspace/pollinations/{file_path}",
+            as_coder=True
+        )
+
+        if result.exit_code != 0:
+            raise IOError(f"Failed to write file: {result.stderr}")
 
 
-# Global sandbox manager instance
-# Uses embeddings repo as local repo for on-demand file copy
-# Import config here to avoid circular imports at module level
-def _create_sandbox_manager():
-    from ...config import config
-    return SandboxManager(
-        use_docker=config.sandbox_enabled,
-        local_repo_path=os.getenv("REPO_PATH"),  # Same path used for embeddings
-    )
+# =============================================================================
+# GLOBAL INSTANCES
+# =============================================================================
 
-# Lazy initialization to avoid import issues
-_sandbox_manager = None
+# The single persistent sandbox
+_persistent_sandbox: Optional[PersistentSandbox] = None
+
+def get_persistent_sandbox() -> PersistentSandbox:
+    """Get or create the global persistent sandbox instance."""
+    global _persistent_sandbox
+    if _persistent_sandbox is None:
+        _persistent_sandbox = PersistentSandbox()
+    return _persistent_sandbox
+
+
+# Legacy sandbox manager (wraps persistent sandbox)
+_sandbox_manager: Optional[SandboxManager] = None
 
 def get_sandbox_manager() -> SandboxManager:
+    """Get or create the global sandbox manager instance."""
     global _sandbox_manager
     if _sandbox_manager is None:
-        _sandbox_manager = _create_sandbox_manager()
+        _sandbox_manager = SandboxManager()
     return _sandbox_manager
 
-# For backward compatibility - will be initialized on first access
+
+# Lazy proxy for backward compatibility
 class _LazySandboxManager:
-    """Lazy proxy for sandbox_manager to allow config to load first."""
+    """Lazy proxy for sandbox_manager."""
     def __getattr__(self, name):
         return getattr(get_sandbox_manager(), name)
 

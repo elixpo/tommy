@@ -5,7 +5,7 @@ import json
 import logging
 import random
 import time
-from typing import Optional, Any
+from typing import Optional, Any, Callable
 from functools import lru_cache
 
 # Constants for retry logic
@@ -63,7 +63,7 @@ class PollinationsClient:
         self._session: Optional[aiohttp.ClientSession] = None
         self._connector: Optional[aiohttp.TCPConnector] = None
         self._cache = ResponseCache(ttl=60)  # 60 second cache
-        self._tool_handlers: dict[str, callable] = {}
+        self._tool_handlers: dict[str, Callable] = {}
 
     async def get_session(self) -> aiohttp.ClientSession:
         """Get or create the aiohttp session with connection pooling."""

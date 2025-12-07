@@ -430,8 +430,9 @@ Respond to the reviewer's feedback.{admin_note}"""
             return f"[GitHub Mention]\n{json.dumps(context, indent=2)}{admin_note}"
 
     async def _post_github_response(self, context: dict, response: str):
-        """Post response back to GitHub."""
+        """Post response back to GitHub using shared session."""
         from .github_auth import github_app_auth
+        from .github import github_manager
 
         repo = context.get("repo")
         if not repo:
@@ -455,32 +456,42 @@ Respond to the reviewer's feedback.{admin_note}"""
 
         ctx_type = context["type"]
 
-        async with aiohttp.ClientSession() as session:
-            if ctx_type in ("issue_comment", "issue_body"):
-                issue_number = context["issue_number"]
-                url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+        # Build URL based on context type
+        if ctx_type in ("issue_comment", "issue_body"):
+            issue_number = context["issue_number"]
+            url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
 
-            elif ctx_type in ("pr_body", "pr_review"):
-                pr_number = context["pr_number"]
-                url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+        elif ctx_type in ("pr_body", "pr_review"):
+            pr_number = context["pr_number"]
+            url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
 
-            elif ctx_type == "pr_review_comment":
-                comment_id = context["comment_id"]
-                pr_number = context["pr_number"]
-                url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/comments/{comment_id}/replies"
+        elif ctx_type == "pr_review_comment":
+            comment_id = context["comment_id"]
+            pr_number = context["pr_number"]
+            url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/comments/{comment_id}/replies"
 
-            else:
-                logger.warning(f"Unknown context type for response: {ctx_type}")
-                return
+        else:
+            logger.warning(f"Unknown context type for response: {ctx_type}")
+            return
 
-            payload = {"body": response}
+        payload = {"body": response}
 
-            async with session.post(url, headers=headers, json=payload) as resp:
+        # Use shared session from github_manager for connection pooling
+        try:
+            session = await github_manager.get_session()
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
                 if resp.status in (200, 201):
                     logger.info(f"Posted response to GitHub: {url}")
                 else:
                     error = await resp.text()
                     logger.error(f"Failed to post to GitHub ({resp.status}): {error}")
+        except Exception as e:
+            logger.error(f"Error posting to GitHub: {e}")
 
 
 # Global instance

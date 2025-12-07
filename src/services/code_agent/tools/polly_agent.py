@@ -488,8 +488,9 @@ async def _handle_code_task(
                 await embed_manager.update()
 
         result: ClaudeCodeResult = await agent.run_task(
-            sandbox_id=sandbox.id,
+            user_id=user_name or "unknown",
             prompt=task,
+            task_description=task[:100],
             on_progress=on_progress,
         )
 
@@ -511,8 +512,8 @@ async def _handle_code_task(
 
             if result.success:
                 status_msg = f"ccr done - {len(result.files_changed)} file(s) changed"
-                if result.pr_url:
-                    status_msg += f" | [PR]({result.pr_url})"
+                if result.branch_name:
+                    status_msg += f" | branch: {result.branch_name}"
                 embed_manager.set_status(status_msg)
             else:
                 embed_manager.set_status(f"ccr error: {result.error or 'Task failed'}")
@@ -537,11 +538,9 @@ async def _handle_code_task(
             "sandbox_id": sandbox.id,
             "task": task,
             "repo": repo,
-            "branch": branch,
+            "branch": result.branch_name or branch,
             "ccr_response": result.output,  # FULL ccr output - AI reads this and decides
             "files_changed": result.files_changed,
-            "commits_made": result.commits_made,
-            "pr_url": result.pr_url,
             "todos": todos_summary,
             "duration": result.duration_seconds,
             "error": result.error,
