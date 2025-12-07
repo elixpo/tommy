@@ -25,6 +25,9 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Container name (persistent) - defined early for TerminalManager
+CONTAINER_NAME = "polly_sandbox"
+
 
 # =============================================================================
 # PERSISTENT TERMINAL SESSION
@@ -299,9 +302,6 @@ CCR_CONFIG_DIR = SANDBOX_DIR / "ccr_config"
 
 # Source repo for syncing (embeddings repo)
 REPO_SOURCE_DIR = PROJECT_ROOT / "data" / "repo" / "pollinations_pollinations"
-
-# Container name (persistent)
-CONTAINER_NAME = "polly_sandbox"
 
 
 @dataclass
