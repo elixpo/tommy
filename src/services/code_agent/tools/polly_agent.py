@@ -380,9 +380,9 @@ async def _handle_code_task(
     Handle coding task via ccr.
 
     This architecture:
-    - Creates sandbox with repo cloned
-    - Installs ccr
-    - Runs the task prompt
+    - Uses ClaudeCodeAgent which manages the persistent sandbox
+    - ClaudeCodeAgent creates task branch internally
+    - Runs the task prompt via ccr
     - Returns results with sandbox still running for follow-ups
 
     The bot AI handles:
@@ -418,37 +418,23 @@ async def _handle_code_task(
                 repo_url=f"https://github.com/{repo}",
             )
             # Initial setup steps
-            embed_manager.add_step("Creating sandbox")
             embed_manager.add_step("Setting up environment")
+            embed_manager.add_step("Running task")
             await embed_manager.update()
         except Exception as e:
             logger.warning(f"Failed to create progress embed: {e}")
             embed_manager = None
 
     try:
-        # Step 1: Create sandbox
+        # Setup step
         if embed_manager:
             embed_manager.start_step(0)
-            embed_manager.set_status("Creating sandbox environment...")
-            await embed_manager.update()
-
-        sandbox = await sandbox_manager.create(
-            repo_url=f"https://github.com/{repo}.git",
-            branch=branch,
-            initiated_by=user_name,
-            initiated_source="discord" if channel else None,
-        )
-
-        _running_tasks[task_id]["sandbox_id"] = sandbox.id
-        _running_tasks[task_id]["messages"].append(f"Sandbox {sandbox.id} created")
-
-        if embed_manager:
-            embed_manager.complete_step(0, f"Sandbox {sandbox.id}")
-            embed_manager.start_step(1)
             embed_manager.set_status("Setting up coding environment...")
             await embed_manager.update()
 
-        # Step 2-3: Run task via the agent
+        _running_tasks[task_id]["messages"].append(f"Task {task_id} starting")
+
+        # Run task via the agent (agent handles branch creation internally)
         agent = get_claude_code_agent()
 
         # Progress callback for the agent - dynamically updates todos
@@ -457,9 +443,10 @@ async def _handle_code_task(
             _running_tasks[task_id]["messages"].append(message)
 
             if embed_manager:
-                # Check if setup is complete
+                # Check if setup is complete and task is starting
                 if "starting" in message.lower() or "🚀" in message:
-                    embed_manager.complete_step(1)
+                    embed_manager.complete_step(0)  # Setup complete
+                    embed_manager.start_step(1)     # Task running
                     embed_manager.set_status("Working on task...")
                     await embed_manager.update()
                     return
@@ -530,12 +517,14 @@ async def _handle_code_task(
         # Include todos in response
         todos_summary = [{"content": t.content, "status": t.status} for t in result.todos]
 
+        # Store task_id for sandbox operations
+        _running_tasks[task_id]["branch_name"] = result.branch_name
+
         # Return FULL ccr output - let bot AI read it and decide what to do
         # This enables dynamic conversation: AI can reply to ccr, ask user, or mark done
         return {
             "success": result.success,
             "task_id": task_id,
-            "sandbox_id": sandbox.id,
             "task": task,
             "repo": repo,
             "branch": result.branch_name or branch,
@@ -551,7 +540,7 @@ async def _handle_code_task(
                 "\n- If ccr completed work: summarize for user, offer to create PR"
                 "\n- If ccr has questions: ask user in Discord, then relay answer to ccr"
                 "\n- If something failed: explain and offer alternatives"
-                "\n\nSandbox is ACTIVE. You can: run_in_sandbox, read/write_sandbox_file, open_pr, destroy_sandbox."
+                "\n\nUse task_id for follow-up operations like open_pr, update_embed, etc."
             )
         }
 
@@ -564,14 +553,10 @@ async def _handle_code_task(
             embed_manager.set_status(f"Error: {e}")
             await embed_manager.finish(success=False)
 
-        # Get sandbox_id if it was created
-        sandbox_id = _running_tasks.get(task_id, {}).get("sandbox_id")
-
         return {
             "success": False,
             "error": str(e),
             "task_id": task_id,
-            "sandbox_id": sandbox_id,
             "task": task,  # Include original task for context
             "repo": repo,
             "branch": branch,

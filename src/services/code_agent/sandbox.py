@@ -502,7 +502,8 @@ class PersistentSandbox:
         timeout: Optional[int] = 60
     ) -> CommandResult:
         """Run a command on the host system."""
-        start_time = asyncio.get_event_loop().time()
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -524,7 +525,7 @@ class PersistentSandbox:
                         stdout="",
                         stderr=f"Command timed out after {timeout}s",
                         timed_out=True,
-                        duration=asyncio.get_event_loop().time() - start_time
+                        duration=loop.time() - start_time
                     )
             else:
                 # No timeout
@@ -534,7 +535,7 @@ class PersistentSandbox:
                 exit_code=proc.returncode or 0,
                 stdout=stdout.decode(errors="replace"),
                 stderr=stderr.decode(errors="replace"),
-                duration=asyncio.get_event_loop().time() - start_time
+                duration=loop.time() - start_time
             )
 
         except Exception as e:
@@ -542,7 +543,7 @@ class PersistentSandbox:
                 exit_code=1,
                 stdout="",
                 stderr=str(e),
-                duration=asyncio.get_event_loop().time() - start_time
+                duration=loop.time() - start_time
             )
 
     async def stop(self):
