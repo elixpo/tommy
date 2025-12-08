@@ -961,11 +961,19 @@ async def _handle_code_task(
         # PARALLEL: Parse todos and get git diff simultaneously
         # These are independent operations - run them concurrently for speed
         async def get_files_changed():
-            diff_result = await terminal.send_command(
-                "git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo ''",
-                timeout=30
-            )
-            return [f.strip() for f in diff_result.split('\n') if f.strip() and not f.startswith('fatal')]
+            try:
+                # Check if terminal is still alive before trying to use it
+                if terminal.process.returncode is not None:
+                    logger.warning(f"Terminal died after ccr, skipping git diff")
+                    return []
+                diff_result = await terminal.send_command(
+                    "git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo ''",
+                    timeout=30
+                )
+                return [f.strip() for f in diff_result.split('\n') if f.strip() and not f.startswith('fatal')]
+            except (ConnectionResetError, BrokenPipeError) as e:
+                logger.warning(f"Terminal connection lost during git diff: {e}")
+                return []
 
         # Run CPU-bound todo parsing and IO-bound git diff in parallel
         todos_task = asyncio.get_running_loop().run_in_executor(None, parse_todos_from_output, output)

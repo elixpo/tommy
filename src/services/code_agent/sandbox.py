@@ -279,9 +279,11 @@ class TerminalManager:
 
         # Initialize the shell environment
         init_cmds = [
+            "set +e",  # Don't exit on command failure
             "export PS1=''",  # No prompt (cleaner output)
             "export HOME=/home/coder",
             "source ~/.bashrc 2>/dev/null || true",  # Load user environment (PATH, etc)
+            "set +e",  # Re-set after bashrc (in case it set -e)
             "export PATH=$HOME/.local/bin:$HOME/.npm-global/bin:$PATH",  # Ensure ccr is in PATH
             "cd /workspace/pollinations",
         ]
