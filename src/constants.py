@@ -500,9 +500,12 @@ Actions:
             "description": """Polly's coding agent - handles ALL code operations.
 
 ⚠️ WORKFLOW:
-1. action='task' → Polly reads files, edits code, runs tests, commits (ALL IN ONE)
-2. action='push' → Push branch to GitHub (after task)
-3. action='open_pr' → Create PR (after task)
+1. action='task' → Polly reads files, edits code, runs tests, commits LOCALLY (saves progress, NOT pushed!)
+2. action='push' → Push local commits to GitHub (only when user wants to share/publish)
+3. action='open_pr' → Create PR from pushed branch
+
+LOCAL vs REMOTE: 'task' only saves work locally. User saying "don't commit" means don't push to GitHub.
+The local commit is just saving progress - it's NOT visible until you call 'push'.
 
 IMPORTANT: To read a file, edit code, or make ANY changes - use action='task' with a description.
 Example: polly_agent(action='task', task='Read README.md and add news entry for Model Monitor feature')

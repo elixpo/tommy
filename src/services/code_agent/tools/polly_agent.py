@@ -914,9 +914,11 @@ async def _handle_code_task(
             asyncio.create_task(embed_manager.update())
 
         # Build prompt for ccr
+        # ccr ALWAYS commits locally - this is just saving work in progress
+        # Push to GitHub and PR creation are separate actions handled by the bot AI
         full_prompt = (
             f"IMPORTANT: You are working on branch '{branch_name}'. "
-            "Commit your changes to THIS branch. "
+            "Commit your changes to THIS branch (this is just local - not pushed yet). "
             "Do NOT include any Claude, AI, or bot attribution in commit messages. "
             "Just describe what was changed.\n\n"
             f"{task}"
@@ -928,7 +930,6 @@ async def _handle_code_task(
         escaped_prompt = shlex.quote(full_prompt)
 
         # Generate a deterministic UUID from thread_id for ccr session isolation
-        import hashlib
         session_uuid = str(uuid.UUID(hashlib.md5(f"polly-{task_id}".encode()).hexdigest()))
 
         if is_continuation:
