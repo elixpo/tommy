@@ -683,7 +683,7 @@ async def handle_reply_context(message: discord.Message, text: str, ref_msg: dis
 
         # Only add dual authorship if replying to a DIFFERENT user's message
         if original_author and ref_msg.author.id != message.author.id:
-            author_note = f"\n\n[Authors: {original_author}, {requester}]"
+            author_note = f"\n\n[Authors: `{original_author}`, `{requester}`]"
         else:
             author_note = ""
 
