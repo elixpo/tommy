@@ -162,9 +162,10 @@ Actions:
 - find_similar: Find duplicates (keywords, limit)
 - list_labels / list_milestones: List available
 - create: New issue (title, description)
-- comment: Add comment (issue_number, comment)
+- comment: Add comment WITHOUT closing (issue_number, comment) - don't use if closing!
 - edit_comment / delete_comment: Modify bot's comments (comment_id)
-- close/reopen: (issue_number, reason, comment) [admin]
+- close: Close WITH comment in ONE call (issue_number, reason, comment) - includes the comment! [admin]
+- reopen: Reopen issue (issue_number, comment) [admin]
 - edit: Edit title/body (issue_number, title, body) [admin]
 - label/unlabel: Manage labels (issue_number, labels) [admin]
 - assign/unassign: Manage assignees (issue_number, assignees) [admin]
