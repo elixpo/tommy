@@ -940,7 +940,8 @@ async def _handle_code_task(
             ccr_flags = f"-p --dangerously-skip-permissions --session-id {session_uuid}"
             logger.info(f"Creating ccr session {session_uuid} for task {task_id}")
 
-        ccr_cmd = f"ccr code {ccr_flags} {escaped_prompt}"
+        # Wrap ccr in subshell to prevent terminal death if ccr crashes
+        ccr_cmd = f"(ccr code {ccr_flags} {escaped_prompt})"
 
         logger.info(f"Running ccr: {task[:100]}...")
         start_time = asyncio.get_running_loop().time()
@@ -949,6 +950,10 @@ async def _handle_code_task(
 
         duration = asyncio.get_running_loop().time() - start_time
         logger.info(f"ccr completed in {duration:.1f}s, output {len(output)} bytes")
+
+        # Log short outputs for debugging (ccr shouldn't complete in <5s normally)
+        if duration < 5 and len(output) < 200:
+            logger.warning(f"ccr finished very quickly - possible error. Output: {output[:500]}")
 
         # Update embed - ccr done, now processing
         if embed_manager:
