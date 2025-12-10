@@ -606,13 +606,66 @@ mode="reasoning": Multi-step analysis with citations (slower, thorough research)
     }
 }
 
+# =============================================================================
+# WEB SCRAPE TOOL - Crawl4AI powered async scraping
+# =============================================================================
+
+WEB_SCRAPE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "web_scrape",
+        "description": """Scrape ANY website for clean, AI-ready content.
+
+Actions:
+- scrape: Fetch a URL → clean markdown (articles, docs, pages)
+- extract: Fetch + LLM-extract specific data (prices, emails, names)
+- multi: Scrape multiple URLs concurrently (max 10)
+
+Use for: Reading docs, extracting data, research, any URL content.
+NOT for: Live search (use web_search), GitHub (use github_* tools).""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["scrape", "extract", "multi"],
+                    "description": "scrape=single URL, extract=URL+smart extraction, multi=concurrent URLs"
+                },
+                "url": {
+                    "type": "string",
+                    "description": "URL to scrape (for scrape/extract actions)"
+                },
+                "urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of URLs (for multi action, max 10)"
+                },
+                "extract": {
+                    "type": "string",
+                    "description": "What to extract - natural language (e.g., 'Extract all product prices and names')"
+                },
+                "include_links": {
+                    "type": "boolean",
+                    "description": "Include page links in result (default false)"
+                },
+                "include_images": {
+                    "type": "boolean",
+                    "description": "Include image URLs in result (default false)"
+                }
+            },
+            "required": ["action"]
+        }
+    }
+}
+
 
 def get_tools_with_embeddings(base_tools: list, embeddings_enabled: bool) -> list:
     """Get tool list with optional features."""
     tools = base_tools.copy()
 
-    # Always include web_search
+    # Always include web_search and web_scrape
     tools.append(WEB_SEARCH_TOOL)
+    tools.append(WEB_SCRAPE_TOOL)
 
     # Conditionally include code_search if embeddings enabled
     if embeddings_enabled:
@@ -764,6 +817,13 @@ TOOL_KEYWORDS = {
         r'whats?\s*(in\s*)?the\s*repo|repo\s*(status|info))\b',
         re.IGNORECASE
     ),
+    "web_scrape": re.compile(
+        r'\b(scrape|scraping|crawl|fetch\s+(this\s+)?(page|url|website|site|link)|'
+        r'read\s+(this\s+)?(page|url|website|article|doc)|'
+        r'get\s+(the\s+)?(content|text|data)\s+(from|of)\s+(this\s+)?(url|page|site)|'
+        r'extract\s+(from|data)|whats?\s+(on|at)\s+(this\s+)?(url|page|site|link))\b',
+        re.IGNORECASE
+    ),
     # NOTE: web_search and code_search are NOT filtered by keywords
     # AI decides when to use them based on context - they're always available
 }
@@ -832,6 +892,7 @@ TOOL_SYSTEM_PROMPT = """You are Polly, GitHub assistant for Pollinations.AI. Tim
 - `polly_agent` - **Code agent** (implement, edit code, create branches, PRs)
 - `github_custom` - Raw data (commits, history, stats)
 - `web_search` - Web search (mode="fast"|"reasoning")
+- `web_scrape` - Scrape ANY URL for content/data (action="scrape"|"extract"|"multi")
 - `code_search` - Semantic code search
 
 ## Behaviors

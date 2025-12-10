@@ -5,6 +5,9 @@ python-dotenv>=1.0.0
 PyJWT>=2.8.0
 cryptography>=41.0.0
 
+# Web scraping with Crawl4AI
+crawl4ai>=0.4.0
+
 # Optional: Local embeddings for semantic code search
 # Only needed if LOCAL_EMBEDDINGS_ENABLED=true
 sentence-transformers>=2.2.0

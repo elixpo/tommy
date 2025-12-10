@@ -325,6 +325,11 @@ class PollyBot(commands.Bot):
         pollinations_client.register_tool_handler("web_search", web_search_handler)
         logger.info("Registered web_search tool handler")
 
+        # Register web_scrape handler (always available - Crawl4AI powered)
+        from .services.web_scraper import web_scrape_handler
+        pollinations_client.register_tool_handler("web_scrape", web_scrape_handler)
+        logger.info("Registered web_scrape tool handler (Crawl4AI)")
+
         # Initialize and start the issue notifier
         self.issue_notifier = init_notifier(self)
         await self.issue_notifier.start()
