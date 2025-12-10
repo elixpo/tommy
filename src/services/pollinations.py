@@ -268,7 +268,7 @@ class PollinationsClient:
         self,
         messages: list[dict],
         discord_username: str,
-        max_iterations: int = 5,  # AI has full control - no artificial limits
+        max_iterations: int = 20,  # Safety cap - most tasks finish in 3-8 calls
         is_admin: bool = False,
         user_message: str = "",
         tool_context: Optional[dict] = None
