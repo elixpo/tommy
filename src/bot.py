@@ -437,7 +437,7 @@ class PollyBot(commands.Bot):
 bot = PollyBot()
 
 
-@bot.tree.context_menu(name="Assist")
+@bot.tree.context_menu(name="Assist", guilds=[discord.Object(id=885844321461485618)])
 async def assist_context_menu(interaction: discord.Interaction, message: discord.Message):
     """Context menu command - right-click message → Apps → Assist. Treats message as if user @mentioned bot."""
     # Silently acknowledge - start_conversation handles thread creation and response
@@ -462,10 +462,11 @@ async def on_ready():
     logger.info(f"Connected to {len(bot.guilds)} guild(s)")
 
     # Sync application commands (context menus, slash commands)
-    # Global sync - may take up to 1 hour to propagate
+    # Guild sync for instant availability
     try:
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} global command(s)")
+        guild = discord.Object(id=885844321461485618)
+        synced = await bot.tree.sync(guild=guild)
+        logger.info(f"Synced {len(synced)} command(s) to guild")
     except Exception as e:
         logger.error(f"Failed to sync commands: {e}")
 
