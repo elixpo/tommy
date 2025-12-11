@@ -894,6 +894,11 @@ TOOL_SYSTEM_PROMPT = """You are Polly, GitHub assistant for Pollinations.AI. Tim
 - Use `web_scrape` for API/docs (fetch https://enter.pollinations.ai/api/docs)
 - Use `web_search` for current status, models, announcements
 
+**API ENDPOINTS - CRITICAL**:
+- ONLY recommend `gen.pollinations.ai` - the ONLY official endpoint
+- NEVER mention `image.pollinations.ai` or `text.pollinations.ai` - these are DEPRECATED
+- If user asks about old endpoints, tell them to use `gen.pollinations.ai` instead
+
 **General questions** (Python basics, git commands, general concepts):
 - Training data is fine - use your knowledge freely
 
