@@ -129,9 +129,9 @@ async def fetch_thread_history(thread: discord.Thread, limit: int = THREAD_HISTO
             if thread.parent:
                 starter = await thread.parent.fetch_message(thread.id)
                 if starter and starter.content:
-                    thread_context += f"\nOriginal message by {starter.author.name}: {starter.content}"
-        except Exception:
-            pass
+                    thread_context += f"\n\n**THIS IS THE PARENT/STARTER MESSAGE THAT THIS THREAD WAS CREATED FROM:**\n{starter.author.name}: {starter.content}"
+        except Exception as e:
+            logger.warning(f"Failed to fetch starter message: {e}")
         messages.append({"role": "system", "content": thread_context})
 
         # Fetch most recent messages (newest first), then reverse to chronological order
