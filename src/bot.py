@@ -125,9 +125,11 @@ async def fetch_thread_history(thread: discord.Thread, limit: int = THREAD_HISTO
         # Add thread name and parent message as context
         thread_context = f"Thread: {thread.name}"
         try:
-            starter = await thread.fetch_message(thread.id)  # Thread ID == starter message ID
-            if starter and starter.content:
-                thread_context += f"\nOriginal message by {starter.author.name}: {starter.content}"
+            # Thread ID == starter message ID, fetch from PARENT channel
+            if thread.parent:
+                starter = await thread.parent.fetch_message(thread.id)
+                if starter and starter.content:
+                    thread_context += f"\nOriginal message by {starter.author.name}: {starter.content}"
         except Exception:
             pass
         messages.append({"role": "system", "content": thread_context})
