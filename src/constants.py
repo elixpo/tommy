@@ -967,7 +967,13 @@ User explicitly asks you to make code changes, create a PR, or push commits.
 You receive conversation history from the thread. USE IT to understand:
 - What the discussion is about
 - What the user wants (issue title/description should come from the conversation)
-- Don't create empty/placeholder issues - extract details from thread history"""
+- Don't create empty/placeholder issues - extract details from thread history
+- If context is unclear, ASK follow-up questions before creating issues
+
+## Workflow Tips
+- **Create + assign**: First create the issue, then call assign with the returned issue_number
+- **Create + label**: First create the issue, then call label with the returned issue_number
+- Multi-step operations need sequential tool calls - create returns the issue_number you need"""
 
 def get_tool_system_prompt() -> str:
     """Get the tool system prompt with current UTC time."""
