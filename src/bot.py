@@ -17,12 +17,6 @@ from .services.pollinations import pollinations_client
 from .services.subscriptions import subscription_manager, init_notifier
 from .services.code_agent.tools import TOOL_HANDLERS as CODE_AGENT_HANDLERS
 from .services.code_agent.sandbox import get_persistent_sandbox
-from .services.code_agent.embed_builder import (
-    StaleTerminalView,
-    PersistentCloseTerminalView,
-    PersistentStaleTerminalView,
-    set_sandbox_getter,
-)
 from .services.webhook_server import start_webhook_server, stop_webhook_server
 
 logger = logging.getLogger(__name__)
@@ -403,59 +397,25 @@ class PollyBot(commands.Bot):
         """Wait until the bot is ready before starting cleanup task."""
         await self.wait_until_ready()
 
-    @tasks.loop(minutes=15)
+    @tasks.loop(minutes=5)
     async def check_stale_terminals(self):
         """
-        Check for stale terminal sessions and notify users.
+        Auto-close idle terminal sessions to save resources.
 
-        Runs every 15 minutes. After 1 hour of inactivity, sends a Discord
-        notification asking the user to close or keep the terminal open.
+        Runs every 5 minutes. Closes terminals idle for more than 5 minutes.
+        Users can resume anytime - ccr sessions and git branches persist.
         """
         try:
             sandbox = get_persistent_sandbox()
-            stale_terminals = await sandbox.check_stale_terminals(max_idle_seconds=3600)
-
-            for terminal_info in stale_terminals:
-                thread_id = terminal_info["thread_id"]
-                user_id = terminal_info["user_id"]
-                channel_id = terminal_info["channel_id"]
-                idle_mins = terminal_info["idle_seconds"] // 60
-
-                if not user_id or not channel_id:
-                    logger.warning(f"Stale terminal {thread_id} missing user_id/channel_id")
-                    continue
-
-                try:
-                    # Get the thread to send notification
-                    channel = self.get_channel(int(thread_id))
-                    if not channel:
-                        # Try fetching if not cached
-                        channel = await self.fetch_channel(int(thread_id))
-
-                    if channel:
-                        # Use persistent view - survives bot restarts!
-                        # View looks up terminal info from sandbox at click time
-                        view = PersistentStaleTerminalView()
-
-                        await channel.send(
-                            f"<@{user_id}> Your coding terminal has been idle for {idle_mins} minutes. "
-                            "Would you like to keep it open or close it?",
-                            view=view
-                        )
-                        logger.info(f"Sent stale terminal notification for thread {thread_id}")
-
-                except discord.NotFound:
-                    logger.warning(f"Thread {thread_id} not found, closing terminal")
-                    await sandbox.close_thread_terminal(thread_id)
-                except Exception as e:
-                    logger.error(f"Failed to notify stale terminal {thread_id}: {e}")
-
+            closed = await sandbox.cleanup_idle_terminals(max_idle_seconds=300)
+            if closed > 0:
+                logger.info(f"Auto-closed {closed} idle terminal(s)")
         except Exception as e:
-            logger.error(f"Error checking stale terminals: {e}")
+            logger.error(f"Error cleaning up idle terminals: {e}")
 
     @check_stale_terminals.before_loop
     async def before_stale_check(self):
-        """Wait until the bot is ready before starting stale terminal check."""
+        """Wait until the bot is ready before starting terminal cleanup task."""
         await self.wait_until_ready()
 
 
@@ -498,12 +458,6 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Failed to sync commands: {e}")
 
-    # Register persistent views for terminal buttons (survive restarts)
-    # These use fixed custom_id and look up terminal info at click time
-    set_sandbox_getter(get_persistent_sandbox)  # Let views access sandbox
-    bot.add_view(PersistentCloseTerminalView())
-    bot.add_view(PersistentStaleTerminalView())
-    logger.info("Registered persistent terminal button views")
 
     # Initialize embeddings if enabled (runs in background)
     if config.local_embeddings_enabled:

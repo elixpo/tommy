@@ -52,12 +52,11 @@ class TerminalSession:
     - Single terminal forces sequential execution (tasks queue up)
     - Multiple terminals = multiple users can work simultaneously
 
-    Context persistence (TWO mechanisms):
-    1. ccr --session-id / --resume: Per-thread ccr conversation context
-    2. Terminal persistence: Shell environment and working directory
-
-    Both are important! ccr session isolation handles conversation memory,
-    terminal persistence handles shell state (current branch, env vars, etc.)
+    Lifecycle:
+    - Created when user starts a task in a Discord thread
+    - Auto-closed after 5 minutes of inactivity (to save resources)
+    - User can resume anytime - ccr sessions are independent of terminals
+    - Git branches persist all code changes regardless of terminal state
     """
     thread_id: str  # Discord thread ID (THE universal key)
     process: asyncio.subprocess.Process
@@ -69,7 +68,6 @@ class TerminalSession:
     is_busy: bool = False  # True when ccr is running
     user_id: int = 0  # Discord user ID who started this terminal
     channel_id: int = 0  # Discord channel ID for notifications
-    notified_stale: bool = False  # True if we've sent stale notification
 
     async def send_command(self, command: str, timeout: Optional[int] = None) -> str:
         """
@@ -161,19 +159,17 @@ class TerminalManager:
     """
     Manages persistent terminal sessions per Discord thread.
 
-    Key insight: ccr runs in print mode, but when it auto-compacts a long
-    session, the new session stays in the SAME terminal and inherits context.
-    So we need to keep terminals alive per thread, not per ccr call.
-
-    Terminal lifecycle:
+    Terminal lifecycle (simplified):
     - Created when user starts a task in a Discord thread
-    - Stays alive for follow-up commands in same thread
-    - User can manually close anytime via polly_agent(action='close_terminal')
-    - After 1 hour idle, bot sends Discord notification asking to close/keep
-    - Only the user who started the terminal can close it
+    - Auto-closed after 5 minutes of inactivity (to save resources)
+    - User can resume anytime - ccr sessions persist independently
+    - Git branches preserve all code changes regardless of terminal state
 
-    Terminal metadata (thread_id → user_id, channel_id) is persisted to disk
-    so Close Terminal buttons work even after bot restarts.
+    Why this works:
+    - ccr sessions are identified by thread ID, not terminal
+    - Git branches (thread/{id}) persist all committed changes
+    - Terminals are just execution environments, not state containers
+    - Auto-closing saves Docker resources without losing work
     """
 
     # File to persist terminal metadata
@@ -184,14 +180,8 @@ class TerminalManager:
         self._terminals: Dict[str, TerminalSession] = {}
         self._terminal_metadata: Dict[str, dict] = {}  # Persisted: thread_id -> {user_id, channel_id}
         self._lock = asyncio.Lock()
-        # Callback for sending Discord notifications (set by bot.py)
-        self._notify_callback = None
         # Load persisted metadata on init
         self._load_metadata()
-
-    def set_notify_callback(self, callback):
-        """Set callback for Discord notifications: callback(user_id, channel_id, thread_id, message, view)"""
-        self._notify_callback = callback
 
     def _load_metadata(self):
         """Load terminal metadata from disk."""
@@ -326,17 +316,23 @@ class TerminalManager:
 
             return closed
 
-    async def check_stale_terminals(self, max_idle_seconds: int = 3600) -> list[dict]:
+    async def cleanup_idle_terminals(self, max_idle_seconds: int = 300) -> int:
         """
-        Check for stale terminals that need user notification.
+        Auto-close terminals that have been idle for too long.
 
-        Does NOT auto-close! Instead returns list of stale terminals
-        so the bot can send Discord notifications with buttons.
+        No notification needed - users can resume anytime since:
+        - ccr sessions persist by thread ID
+        - Git branches preserve all code changes
+        - Terminals are just execution environments
+
+        Args:
+            max_idle_seconds: Close terminals idle longer than this (default 5 min)
 
         Returns:
-            List of dicts with thread_id, user_id, channel_id for stale terminals
+            Number of terminals closed
         """
-        stale_terminals = []
+        closed_count = 0
+        terminals_to_close = []
 
         async with self._lock:
             now = datetime.utcnow()
@@ -344,34 +340,26 @@ class TerminalManager:
             for thread_id, terminal in self._terminals.items():
                 idle_time = (now - terminal.last_used).total_seconds()
 
-                # Check if idle > threshold and not busy and not already notified
-                if (idle_time > max_idle_seconds and
-                    not terminal.is_busy and
-                    not terminal.notified_stale):
+                # Close if idle > threshold and not busy
+                if idle_time > max_idle_seconds and not terminal.is_busy:
+                    terminals_to_close.append((thread_id, terminal))
 
-                    # Mark as notified so we don't spam
-                    terminal.notified_stale = True
+        # Close outside lock to avoid holding it too long
+        for thread_id, terminal in terminals_to_close:
+            try:
+                await terminal.close()
+                async with self._lock:
+                    self._terminals.pop(thread_id, None)
+                    self._terminal_metadata.pop(thread_id, None)
+                closed_count += 1
+                logger.info(f"Auto-closed idle terminal {thread_id}")
+            except Exception as e:
+                logger.warning(f"Error closing idle terminal {thread_id}: {e}")
 
-                    stale_terminals.append({
-                        "thread_id": thread_id,
-                        "user_id": terminal.user_id,
-                        "channel_id": terminal.channel_id,
-                        "idle_seconds": int(idle_time),
-                    })
-                    logger.info(f"Terminal {thread_id} is stale (idle {int(idle_time)}s)")
+        if closed_count > 0:
+            self._save_metadata()
 
-        return stale_terminals
-
-    def reset_stale_notification(self, thread_id: str):
-        """
-        Reset the stale notification flag for a terminal.
-
-        Call this when user clicks "Keep Open" so they get notified again
-        after another hour of inactivity.
-        """
-        if thread_id in self._terminals:
-            self._terminals[thread_id].notified_stale = False
-            self._terminals[thread_id].last_used = datetime.utcnow()
+        return closed_count
 
     def get_terminal_info(self, thread_id: str) -> dict | None:
         """
@@ -401,15 +389,9 @@ class TerminalManager:
 
         return None
 
-    async def cleanup_stale(self, max_idle_seconds: int = 3600):
-        """
-        Legacy method - now just logs stale terminals.
-
-        Use check_stale_terminals() instead for proper Discord notification flow.
-        """
-        stale = await self.check_stale_terminals(max_idle_seconds)
-        if stale:
-            logger.info(f"Found {len(stale)} stale terminals (not auto-closing)")
+    async def cleanup_stale(self, max_idle_seconds: int = 300):
+        """Auto-close idle terminals. Alias for cleanup_idle_terminals()."""
+        return await self.cleanup_idle_terminals(max_idle_seconds)
 
     async def close_all(self):
         """Close all terminal sessions and clear metadata."""
@@ -1157,26 +1139,27 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
         """
         return await self.terminal_manager.close_terminal(thread_id)
 
-    async def check_stale_terminals(self, max_idle_seconds: int = 3600) -> list[dict]:
+    async def cleanup_idle_terminals(self, max_idle_seconds: int = 300) -> int:
         """
-        Check for terminals idle longer than threshold.
+        Auto-close terminals that have been idle for too long.
 
-        Returns list of stale terminal info for Discord notification.
-        Does NOT auto-close - that's up to the user.
+        Users can resume anytime - ccr sessions and git branches persist.
+
+        Args:
+            max_idle_seconds: Close terminals idle longer than this (default 5 min)
+
+        Returns:
+            Number of terminals closed
         """
-        return await self.terminal_manager.check_stale_terminals(max_idle_seconds)
-
-    def reset_stale_notification(self, thread_id: str):
-        """Reset stale notification flag when user clicks 'Keep Open'."""
-        self.terminal_manager.reset_stale_notification(thread_id)
+        return await self.terminal_manager.cleanup_idle_terminals(max_idle_seconds)
 
     def get_terminal_info(self, thread_id: str) -> dict | None:
         """Get terminal info for a thread (used by persistent button handlers)."""
         return self.terminal_manager.get_terminal_info(thread_id)
 
-    async def cleanup_stale_terminals(self, max_idle_seconds: int = 3600):
-        """Legacy method - use check_stale_terminals() for proper notification flow."""
-        await self.terminal_manager.cleanup_stale(max_idle_seconds)
+    async def cleanup_stale_terminals(self, max_idle_seconds: int = 300):
+        """Legacy alias for cleanup_idle_terminals()."""
+        return await self.cleanup_idle_terminals(max_idle_seconds)
 
     async def close_all_terminals(self):
         """Close all persistent terminal sessions."""
