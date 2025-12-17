@@ -1102,20 +1102,20 @@ Examples of how to handle user requests:
 | "recent msgs from @user" | `history` then filter by author, OR `messages` with user_id |
 | "what's happening in #dev?" | `history` with channel_name="dev" |
 | "find the thread about repo cleanup" | `threads` with query="repo cleanup" |
-| "show me all threads" / "list threads" | `threads` with NO query (lists all) |
+| "show me threads about X" | `threads` with query="X" (ALWAYS use query - tons of threads!) |
 | "who has the admin role?" | `members` with role_name="admin" |
 | "who is @user?" | `members` with user_id=parsed_mention |
 | "find channel for announcements" | `channels` with query="announcements" |
-| "what channels exist?" | `channels` with NO query (lists all) |
+| "where do we discuss X?" | `channels` with query="X" (ALWAYS use query - tons of channels!) |
 | "context around that message" | `context` with message_id + channel_id |
 | "show me that discussion thread" | `thread_history` with thread_id |
 
 **Key behaviors:**
 - Mentions like `<@123>`, `<#456>`, `<@&789>` are AUTO-PARSED - just pass them in query!
-- No query needed for listing: `threads`, `channels`, `members`, `roles` all work without query
 - Chain searches when needed: find user first → then search their messages
 - Use `history` for "recent/latest" requests, `messages` for keyword search
 - Be proactive: if user asks about a discussion, SEARCH for it!
+- **ALWAYS use a query** for threads/channels - there are TONS of them! Don't list all.
 
 ## Edit vs Comment - IMPORTANT
 **Prefer EDITING over adding new comments when the SAME USER wants changes:**
