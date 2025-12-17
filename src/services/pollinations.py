@@ -176,8 +176,9 @@ class PollinationsClient:
             - tool_calls: List of tool calls made (for logging)
             - tool_results: Results from tool executions
         """
-        # Build system prompt with admin context if applicable (includes current UTC time)
-        system_content = get_tool_system_prompt()
+        # Build system prompt with admin context - prompt content differs based on admin status
+        # Non-admins get a prompt that doesn't mention admin tools at all (defense in depth)
+        system_content = get_tool_system_prompt(is_admin=is_admin)
         if is_admin:
             system_content += "\n\n## ADMIN MODE\nUser is admin. All tools available. Confirm before destructive ops (merge, delete, lock, close PR, bulk edits, etc.) - use judgment."
         else:

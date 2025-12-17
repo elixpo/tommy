@@ -927,43 +927,16 @@ When users share files, you CAN see them. Describe what you see, answer question
 **Rule of thumb**: Unsure? USE TOOLS FIRST, then answer. Never guess - wrong info is worse than taking a moment to verify. Better to fetch docs and be accurate than answer fast and be wrong.
 
 ## Tools
-- `github_overview` - Repo summary (issues, labels, milestones, projects)
-- `github_issue` - Issues: get, search, create, comment, close, label, assign
-- `github_pr` - PRs: get, list, review, approve, merge, inline comments
-- `github_project` - Projects V2: list, view, add items, set status
-- `polly_agent` - **Code agent** (implement, edit code, create branches, PRs)
-- `github_custom` - Raw data (commits, history, stats)
-- `web_search` - Web search (mode="fast"|"reasoning")
-- `web_scrape` - Scrape ANY URL for content/data (action="scrape"|"extract"|"multi")
-- `code_search` - Semantic code search
+{tools_section}
 
 ## Behaviors
 
 **PARALLEL CALLS**: Call independent tools together.
 - "compare #100 and #200" → github_issue(get 100) + github_issue(get 200)
-- "what's in the repo?" → github_overview (NOT polly_agent)
+- "what's in the repo?" → github_overview
 
 **PROACTIVE**: Fetch data, don't ask. User mentions #123? GET it.
-
-## polly_agent - STRICT RULES
-
-**polly_agent is ONLY for writing/editing code. NOTHING ELSE.**
-
-⛔ **NEVER USE polly_agent FOR:**
-- Questions or inquiries of any kind
-- Reading/searching/finding/understanding code → use `code_search`
-- Anything that doesn't require actual file modifications
-
-✅ **ONLY USE polly_agent WHEN:**
-User explicitly asks you to make code changes, create a PR, or push commits.
-
-**When in doubt: DON'T use polly_agent. Use code_search instead.**
-
-**RULES:**
-- `code_search` FIRST → understand the code before editing
-- After edits: use `push`/`open_pr` to deploy
-- ALWAYS quote agent_response in your reply
-- Confirm destructive ops (merge, delete, close)
+{polly_agent_section}
 
 ## Formatting (examples for reference - format as you see fit!)
 
@@ -1031,15 +1004,86 @@ You receive conversation history from the thread. **PAY ATTENTION TO WHO IS TALK
 - User "bob" says "fix issue #50's description" → add `comment` (bob didn't create it)
 - User "alice" says "update my comment on #50" → `edit_comment` (need comment_id from issue)"""
 
-def get_tool_system_prompt() -> str:
-    """Get the tool system prompt with current UTC time."""
+# Tools section for ADMIN users - full access
+ADMIN_TOOLS_SECTION = """- `github_overview` - Repo summary (issues, labels, milestones, projects)
+- `github_issue` - Issues: get, search, create, comment, close, label, assign
+- `github_pr` - PRs: get, list, review, approve, merge, inline comments
+- `github_project` - Projects V2: list, view, add items, set status
+- `polly_agent` - **Code agent** (implement, edit code, create branches, PRs)
+- `github_custom` - Raw data (commits, history, stats)
+- `web_search` - Web search (mode="fast"|"reasoning")
+- `web_scrape` - Scrape ANY URL for content/data (action="scrape"|"extract"|"multi")
+- `code_search` - Semantic code search"""
+
+# Tools section for NON-ADMIN users - read-only + create/comment
+NON_ADMIN_TOOLS_SECTION = """- `github_overview` - Repo summary (issues, labels, milestones, projects)
+- `github_issue` - Issues: get, search, create, comment (read + create only)
+- `github_pr` - PRs: get, list, comment (read-only)
+- `github_custom` - Raw data (commits, history, stats)
+- `web_search` - Web search (mode="fast"|"reasoning")
+- `web_scrape` - Scrape ANY URL for content/data (action="scrape"|"extract"|"multi")
+- `code_search` - Semantic code search"""
+
+# polly_agent rules section - ONLY shown to admins
+POLLY_AGENT_SECTION = """
+
+## polly_agent - STRICT RULES
+
+**polly_agent is ONLY for writing/editing code. NOTHING ELSE.**
+
+⛔ **NEVER USE polly_agent FOR:**
+- Questions or inquiries of any kind
+- Reading/searching/finding/understanding code → use `code_search`
+- Anything that doesn't require actual file modifications
+
+✅ **ONLY USE polly_agent WHEN:**
+User explicitly asks you to make code changes, create a PR, or push commits.
+
+**When in doubt: DON'T use polly_agent. Use code_search instead.**
+
+**RULES:**
+- `code_search` FIRST → understand the code before editing
+- After edits: use `push`/`open_pr` to deploy
+- ALWAYS quote agent_response in your reply
+- Confirm destructive ops (merge, delete, close)"""
+
+
+def get_tool_system_prompt(is_admin: bool = True) -> str:
+    """Get the tool system prompt with current UTC time.
+
+    Args:
+        is_admin: If True, includes admin tools (polly_agent, close, merge, etc.)
+                  If False, shows only read-only + create/comment tools.
+
+    Returns:
+        The formatted system prompt appropriate for the user's permission level.
+    """
     from datetime import datetime, timezone
     current_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    return TOOL_SYSTEM_PROMPT.format(repo_info=REPO_INFO, current_utc=current_utc)
+
+    # Select appropriate sections based on admin status
+    if is_admin:
+        tools_section = ADMIN_TOOLS_SECTION
+        polly_agent_section = POLLY_AGENT_SECTION
+    else:
+        tools_section = NON_ADMIN_TOOLS_SECTION
+        polly_agent_section = ""  # Non-admins don't even know polly_agent exists
+
+    return TOOL_SYSTEM_PROMPT.format(
+        repo_info=REPO_INFO,
+        current_utc=current_utc,
+        tools_section=tools_section,
+        polly_agent_section=polly_agent_section
+    )
 
 
-# Keep static version for backwards compatibility (without dynamic time)
-TOOL_SYSTEM_PROMPT_STATIC = TOOL_SYSTEM_PROMPT.format(repo_info=REPO_INFO, current_utc="[dynamic]")
+# Keep static version for backwards compatibility (without dynamic time) - uses admin version
+TOOL_SYSTEM_PROMPT_STATIC = TOOL_SYSTEM_PROMPT.format(
+    repo_info=REPO_INFO,
+    current_utc="[dynamic]",
+    tools_section=ADMIN_TOOLS_SECTION,
+    polly_agent_section=POLLY_AGENT_SECTION
+)
 
 # =============================================================================
 # LEGACY - Keep for backwards compatibility during transition
