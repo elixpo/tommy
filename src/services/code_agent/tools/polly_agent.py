@@ -251,11 +251,13 @@ async def tool_polly_agent(
     # Sandbox file operations (for read_sandbox_file, write_sandbox_file)
     file_path: Optional[str] = None,
     file_content: Optional[str] = None,
-    # Discord context (injected by bot.py)
+    # Discord context (injected by bot.py via _context)
     discord_channel: Optional[discord.TextChannel] = None,
     discord_thread_id: Optional[int] = None,  # Thread ID for automatic task_id lookup
     discord_user_name: Optional[str] = None,
-    # Admin flag - MUST be explicitly set by bot.py wrapper
+    # Context dict injected by pollinations client (contains admin status, user info)
+    _context: dict = None,
+    # Legacy admin flag - prefer using _context
     _is_admin: bool = False,
     **kwargs
 ) -> dict:
@@ -297,18 +299,39 @@ async def tool_polly_agent(
         pr_title: PR title (for open_pr)
         pr_body: PR description (for open_pr)
         base_branch: Base branch for PR (default: main)
-        _is_admin: Admin flag - MUST be set by bot.py (default False = blocked)
+        _context: Context dict with is_admin, user_id, etc.
 
     Returns:
         Result dict with status, details, and _ai_hint for follow-up guidance
     """
     # SECURITY: Admin check - code agent can modify repos
-    # The _is_admin flag MUST be explicitly set True by the bot.py wrapper
-    # Default is False, so direct calls without the wrapper are blocked
-    if not _is_admin:
+    # Check _context first (new approach), fall back to legacy _is_admin
+    is_admin = False
+    context_user_id = None
+    context_user_name = None
+    if _context:
+        is_admin = _context.get("is_admin", False)
+        context_user_id = _context.get("user_id")
+        context_user_name = _context.get("user_name")
+        # Also extract Discord context from _context if not passed directly
+        if not discord_channel:
+            discord_channel = _context.get("discord_channel")
+        if not discord_thread_id:
+            discord_thread_id = _context.get("discord_thread_id")
+        if not discord_user_name:
+            discord_user_name = _context.get("user_name")
+    else:
+        # Legacy: use _is_admin flag
+        is_admin = _is_admin
+
+    if not is_admin:
+        # SECURITY: Log blocked polly_agent access attempt
+        logger.warning(f"SECURITY: Blocked polly_agent access for non-admin user {context_user_name or discord_user_name} (id={context_user_id})")
         return {
             "error": "Code agent requires admin permissions. This tool can modify repository code, create branches, and open PRs - ask a team member with admin access!"
         }
+    else:
+        logger.info(f"Polly agent access authorized for {context_user_name or discord_user_name} (id={context_user_id})")
 
     # SIMPLIFIED: thread_id IS the task_id now - no lookup needed!
     # If we have a thread_id, that's our task_id

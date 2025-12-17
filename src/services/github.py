@@ -1027,13 +1027,34 @@ async def tool_github_issue(
     Consolidated issue tool - handles ALL issue operations based on action.
     """
     # Extract context if provided (new approach - avoids re-registering handlers per message)
+    is_admin = False
+    context_user_id = None
+    context_user_name = None
     if _context:
+        is_admin = _context.get("is_admin", False)
+        context_user_id = _context.get("user_id")
+        context_user_name = _context.get("user_name")
         user_id = _context.get("user_id", user_id)
         channel_id = _context.get("channel_id", channel_id)
         guild_id = _context.get("guild_id", guild_id)
         reporter = _context.get("reporter", reporter)
+        user_role_ids = _context.get("user_role_ids", user_role_ids)
 
     action = action.lower()
+
+    # ADMIN ACTIONS - require admin permission
+    # These actions modify issue state/metadata (not just adding content)
+    ADMIN_ACTIONS = {
+        "close", "reopen", "edit", "label", "unlabel", "assign", "unassign",
+        "milestone", "lock", "link", "create_sub_issue", "add_sub_issue", "remove_sub_issue"
+    }
+    if action in ADMIN_ACTIONS:
+        if not is_admin:
+            # SECURITY: Log blocked admin action attempt
+            logger.warning(f"SECURITY: Blocked admin action '{action}' for non-admin user {context_user_name} (id={context_user_id})")
+            return {"error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"}
+        else:
+            logger.info(f"Admin action '{action}' authorized for {context_user_name} (id={context_user_id})")
 
     # READ ACTIONS
     if action == "get":
@@ -1368,7 +1389,26 @@ async def tool_github_project(
     """
     Consolidated project tool - handles ALL GitHub Projects V2 operations.
     """
+    # Extract admin status from context
+    is_admin = False
+    context_user_id = None
+    context_user_name = None
+    if _context:
+        is_admin = _context.get("is_admin", False)
+        context_user_id = _context.get("user_id")
+        context_user_name = _context.get("user_name")
+
     action = action.lower()
+
+    # ADMIN ACTIONS - require admin permission
+    ADMIN_ACTIONS = {"add", "remove", "set_status", "set_field"}
+    if action in ADMIN_ACTIONS:
+        if not is_admin:
+            # SECURITY: Log blocked admin action attempt
+            logger.warning(f"SECURITY: Blocked project admin action '{action}' for non-admin user {context_user_name} (id={context_user_id})")
+            return {"error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"}
+        else:
+            logger.info(f"Project admin action '{action}' authorized for {context_user_name} (id={context_user_id})")
 
     # LIST ALL PROJECTS (no project_number required)
     if action == "list":

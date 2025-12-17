@@ -1545,7 +1545,9 @@ async def tool_github_pr(
     file_path: str = None,
     ref: str = "main",  # Default to main branch (pollinations/pollinations uses main, not master)
     # Injected context
-    reporter: str = "Discord User"
+    reporter: str = "Discord User",
+    _context: dict = None,
+    **kwargs  # Catch any extra args
 ) -> dict:
     """
     Consolidated PR tool - handles ALL pull request operations.
@@ -1586,7 +1588,32 @@ async def tool_github_pr(
     AI:
     - review: AI-powered code review
     """
+    # Extract admin status from context
+    is_admin = False
+    context_user_id = None
+    context_user_name = None
+    if _context:
+        is_admin = _context.get("is_admin", False)
+        context_user_id = _context.get("user_id")
+        context_user_name = _context.get("user_name")
+        reporter = _context.get("reporter", reporter)
+
     action = action.lower()
+
+    # ADMIN ACTIONS - require admin permission
+    ADMIN_ACTIONS = {
+        "request_review", "remove_reviewer", "approve", "request_changes", "merge",
+        "update", "create", "convert_to_draft", "ready_for_review", "update_branch",
+        "inline_comment", "suggest", "resolve_thread", "unresolve_thread",
+        "enable_auto_merge", "disable_auto_merge", "close", "reopen"
+    }
+    if action in ADMIN_ACTIONS:
+        if not is_admin:
+            # SECURITY: Log blocked admin action attempt
+            logger.warning(f"SECURITY: Blocked PR admin action '{action}' for non-admin user {context_user_name} (id={context_user_id})")
+            return {"error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"}
+        else:
+            logger.info(f"PR admin action '{action}' authorized for {context_user_name} (id={context_user_id})")
 
     # READ ACTIONS
     if action == "get":

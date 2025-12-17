@@ -835,105 +835,33 @@ async def process_message(
     user_is_admin = is_admin(user)
     logger.info(f"process_message: user={user}, user_is_admin={user_is_admin}")
 
-    # Store original handlers
-    original_handlers = {
-        "github_issue": TOOL_HANDLERS["github_issue"],
-        "github_project": TOOL_HANDLERS["github_project"],
-        "github_pr": TOOL_HANDLERS["github_pr"],
-        "polly_agent": CODE_AGENT_HANDLERS.get("polly_agent"),
+    # Build tool context - this is passed to ALL tool handlers for permission checks
+    # This is thread-safe because it's created per-request, not globally registered
+    tool_context = {
+        "is_admin": user_is_admin,
+        "user_id": user.id,
+        "user_name": str(user),
+        "reporter": session.original_author_name,
+        "channel_id": channel.id,
+        "guild_id": channel.guild.id if hasattr(channel, 'guild') and channel.guild else None,
+        "user_role_ids": [r.id for r in user.roles] if isinstance(user, discord.Member) else [],
+        # For polly_agent
+        "discord_channel": channel,
+        "discord_thread_id": session.thread_id,
+        "discord_bot": bot,
     }
-
-    # Tool-specific admin actions - imported from constants.py (single source of truth)
-    from .constants import ADMIN_ACTIONS
-    ISSUE_ADMIN_ACTIONS = ADMIN_ACTIONS.get("github_issue", set())
-    PR_ADMIN_ACTIONS = ADMIN_ACTIONS.get("github_pr", set())
-    PROJECT_ADMIN_ACTIONS = ADMIN_ACTIONS.get("github_project", set())
-
-    def check_admin(tool_name: str, action: str) -> dict | None:
-        """
-        Global admin check. Returns error dict if blocked, None if allowed.
-        - polly_agent: ALL actions require admin (tool modifies repos)
-        - Others: Check tool-specific admin actions
-        """
-        if tool_name == "polly_agent":
-            # Code agent is entirely admin-only
-            if not user_is_admin:
-                return {"error": "Code agent requires admin permissions. This tool can modify repository code, create branches, and open PRs - ask a team member with admin access!"}
-        elif not user_is_admin:
-            action_lower = action.lower()
-            # Check tool-specific admin actions
-            if tool_name == "github_issue" and action_lower in ISSUE_ADMIN_ACTIONS:
-                return {"error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"}
-            elif tool_name == "github_pr" and action_lower in PR_ADMIN_ACTIONS:
-                return {"error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"}
-            elif tool_name == "github_project" and action_lower in PROJECT_ADMIN_ACTIONS:
-                return {"error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"}
-        return None
-
-    async def wrapped_github_issue(**kwargs):
-        """Wrapper that injects context and checks admin permissions."""
-        if err := check_admin("github_issue", kwargs.get("action", "")):
-            return err
-        kwargs["reporter"] = session.original_author_name
-        kwargs["user_id"] = user.id
-        kwargs["channel_id"] = channel.id
-        kwargs["guild_id"] = channel.guild.id if hasattr(channel, 'guild') and channel.guild else None
-        # Pass user role IDs for team member detection (skip inbox:discord label)
-        kwargs["user_role_ids"] = [r.id for r in user.roles] if isinstance(user, discord.Member) else []
-        return await original_handlers["github_issue"](**kwargs)
-
-    async def wrapped_github_project(**kwargs):
-        """Wrapper that checks admin permissions for project write actions."""
-        if err := check_admin("github_project", kwargs.get("action", "")):
-            return err
-        return await original_handlers["github_project"](**kwargs)
-
-    async def wrapped_github_pr(**kwargs):
-        """Wrapper that injects context and checks admin permissions for PR actions."""
-        if err := check_admin("github_pr", kwargs.get("action", "")):
-            return err
-        kwargs["reporter"] = session.original_author_name
-        return await original_handlers["github_pr"](**kwargs)
-
-    async def wrapped_polly_agent(**kwargs):
-        """Wrapper that injects Discord context for code agent (admin only)."""
-        logger.info(f"wrapped_polly_agent called with action={kwargs.get('action', 'N/A')}, user_is_admin={user_is_admin}")
-        if err := check_admin("polly_agent", kwargs.get("action", "")):
-            logger.warning(f"wrapped_polly_agent blocked by admin check: {err}")
-            return err
-        if original_handlers["polly_agent"] is None:
-            logger.warning("wrapped_polly_agent: original handler is None")
-            return {"error": "Code agent not available"}
-
-        # Inject Discord context - thread_id is the KEY for task reuse
-        # polly_agent will auto-lookup existing task for this thread
-        kwargs["discord_channel"] = channel
-        kwargs["discord_thread_id"] = session.thread_id  # Critical for branch reuse!
-        kwargs["discord_bot"] = bot
-        kwargs["discord_user_id"] = user.id
-        kwargs["discord_user_name"] = str(user)
-        kwargs["_is_admin"] = True  # Already checked above
-        kwargs.setdefault("interactive", True)
-        kwargs.setdefault("human_review", True)
-
-        return await original_handlers["polly_agent"](**kwargs)
-
-    # Register wrapped handlers temporarily
-    pollinations_client.register_tool_handler("github_issue", wrapped_github_issue)
-    pollinations_client.register_tool_handler("github_project", wrapped_github_project)
-    pollinations_client.register_tool_handler("github_pr", wrapped_github_pr)
-    if original_handlers["polly_agent"]:
-        pollinations_client.register_tool_handler("polly_agent", wrapped_polly_agent)
 
     try:
         # Process with native tool calling
         # Note: polly_agent handles task_id lookup via thread_id internally
+        # tool_context is passed to handlers for per-request permission checks (thread-safe)
         result = await pollinations_client.process_with_tools(
             user_message=text,
             discord_username=str(user),
             thread_history=thread_history,
             image_urls=image_urls,
-            is_admin=user_is_admin
+            is_admin=user_is_admin,
+            tool_context=tool_context
         )
 
         response_text = result.get("response", "")
@@ -987,13 +915,9 @@ async def process_message(
         if response_text:
             await send_long_message(channel, response_text, reply_to=reply_to)
 
-    finally:
-        # Restore original handlers
-        pollinations_client.register_tool_handler("github_issue", original_handlers["github_issue"])
-        pollinations_client.register_tool_handler("github_project", original_handlers["github_project"])
-        pollinations_client.register_tool_handler("github_pr", original_handlers["github_pr"])
-        if original_handlers["polly_agent"]:
-            pollinations_client.register_tool_handler("polly_agent", original_handlers["polly_agent"])
+    except Exception as e:
+        logger.error(f"Error processing message: {e}")
+        raise
 
 
 async def send_long_message(
