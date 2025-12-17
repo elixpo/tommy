@@ -1000,6 +1000,7 @@ You receive conversation history from the thread. USE IT to understand:
 - If context is unclear, ASK follow-up questions before creating issues
 
 ## Workflow Tips
+- **CHECK FOR DUPLICATES FIRST** - Before creating any issue, use `find_similar` to check for existing issues! Link to existing issue instead of creating duplicates.
 - **Create + assign**: First create the issue, then call assign with the returned issue_number
 - **Create + label**: First create the issue, then call label with the returned issue_number
 - Multi-step operations need sequential tool calls - create returns the issue_number you need
