@@ -1088,6 +1088,35 @@ You receive conversation history from the thread. **PAY ATTENTION TO WHO IS TALK
 - **Create + label**: First create the issue, then call label with the returned issue_number
 - Multi-step operations need sequential tool calls - create returns the issue_number you need
 
+## discord_search - SMART USAGE GUIDE
+
+**discord_search works with VAGUE queries - extract intent and parameters!**
+
+Examples of how to handle user requests:
+
+| User says | What to do |
+|-----------|------------|
+| "what was that msg about AI from @user" | 1. Parse mention → get user_id, 2. `messages` with query="AI", user_id=parsed |
+| "did we discuss X already?" | `messages` with query="X" |
+| "summary of last 10 msgs" | `history` on current channel with limit=10 |
+| "recent msgs from @user" | `history` then filter by author, OR `messages` with user_id |
+| "what's happening in #dev?" | `history` with channel_name="dev" |
+| "find the thread about repo cleanup" | `threads` with query="repo cleanup" |
+| "show me all threads" / "list threads" | `threads` with NO query (lists all) |
+| "who has the admin role?" | `members` with role_name="admin" |
+| "who is @user?" | `members` with user_id=parsed_mention |
+| "find channel for announcements" | `channels` with query="announcements" |
+| "what channels exist?" | `channels` with NO query (lists all) |
+| "context around that message" | `context` with message_id + channel_id |
+| "show me that discussion thread" | `thread_history` with thread_id |
+
+**Key behaviors:**
+- Mentions like `<@123>`, `<#456>`, `<@&789>` are AUTO-PARSED - just pass them in query!
+- No query needed for listing: `threads`, `channels`, `members`, `roles` all work without query
+- Chain searches when needed: find user first → then search their messages
+- Use `history` for "recent/latest" requests, `messages` for keyword search
+- Be proactive: if user asks about a discussion, SEARCH for it!
+
 ## Edit vs Comment - IMPORTANT
 **Prefer EDITING over adding new comments when the SAME USER wants changes:**
 
