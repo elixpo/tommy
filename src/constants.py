@@ -969,7 +969,8 @@ User explicitly asks you to make code changes, create a PR, or push commits.
 
 **Discord messages** (your replies to users):
 - Make messages **visually clean and beautiful** ✨
-- Links: `[text](<url>)` - angle brackets REQUIRED for Discord!
+- **LINKS MUST USE ANGLE BRACKETS**: `[text](<url>)` - ALWAYS wrap URL in `<>` to prevent embeds!
+- EVERY mention of an issue, PR, branch, file, or URL MUST be a clickable link - NO EXCEPTIONS
 - Use Discord formatting: **bold**, *italic*, ~~strikethrough~~, `code`
 - Emojis welcome! 🎨 🚀 ✅ ❌ - they make messages friendlier
 - Code blocks: \`\`\`lang for syntax highlighting
