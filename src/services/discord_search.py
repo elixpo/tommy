@@ -11,13 +11,60 @@ Provides unrestricted search access to:
 
 import aiohttp
 import logging
-from typing import Optional, List, Dict, Any
+import re
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
 import discord
 
 from ..config import config
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# MENTION PARSER - Extract IDs from Discord mention formats
+# =============================================================================
+
+def parse_discord_mentions(text: str) -> Dict[str, List[int]]:
+    """
+    Parse Discord mention formats and extract IDs.
+
+    Formats:
+        <@123456789> or <@!123456789> - User mention
+        <#123456789> - Channel mention
+        <@&123456789> - Role mention
+
+    Returns:
+        Dict with 'user_ids', 'channel_ids', 'role_ids' lists
+    """
+    result = {
+        "user_ids": [],
+        "channel_ids": [],
+        "role_ids": [],
+    }
+
+    # User mentions: <@123> or <@!123> (! is for nicknames)
+    user_pattern = r'<@!?(\d+)>'
+    for match in re.finditer(user_pattern, text):
+        user_id = int(match.group(1))
+        if user_id not in result["user_ids"]:
+            result["user_ids"].append(user_id)
+
+    # Channel mentions: <#123>
+    channel_pattern = r'<#(\d+)>'
+    for match in re.finditer(channel_pattern, text):
+        channel_id = int(match.group(1))
+        if channel_id not in result["channel_ids"]:
+            result["channel_ids"].append(channel_id)
+
+    # Role mentions: <@&123>
+    role_pattern = r'<@&(\d+)>'
+    for match in re.finditer(role_pattern, text):
+        role_id = int(match.group(1))
+        if role_id not in result["role_ids"]:
+            result["role_ids"].append(role_id)
+
+    return result
 
 # Discord API base URL
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -458,6 +505,203 @@ class DiscordSearchClient:
             return {"error": str(e)}
 
 
+    # =========================================================================
+    # CHANNEL HISTORY - Recent messages without search query
+    # =========================================================================
+
+    async def get_channel_history(
+        self,
+        channel: discord.TextChannel,
+        limit: int = 25,
+        before: Optional[int] = None,
+        after: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get recent messages from a channel.
+
+        Args:
+            channel: The Discord channel
+            limit: Number of messages to fetch (default 25, max 100)
+            before: Get messages before this message ID (for pagination)
+            after: Get messages after this message ID
+
+        Returns:
+            Recent messages from the channel
+        """
+        try:
+            limit = min(limit, 100)
+            messages = []
+
+            # Build fetch parameters
+            kwargs = {"limit": limit}
+            if before:
+                kwargs["before"] = discord.Object(id=before)
+            if after:
+                kwargs["after"] = discord.Object(id=after)
+
+            async for msg in channel.history(**kwargs):
+                messages.append({
+                    "id": str(msg.id),
+                    "content": msg.content[:500] if msg.content else "",
+                    "author": msg.author.name,
+                    "author_id": str(msg.author.id),
+                    "timestamp": msg.created_at.isoformat(),
+                    "attachments": len(msg.attachments),
+                    "embeds": len(msg.embeds),
+                    "jump_url": msg.jump_url,
+                })
+
+            return {
+                "success": True,
+                "channel": channel.name,
+                "channel_id": str(channel.id),
+                "count": len(messages),
+                "messages": messages,
+                "has_more": len(messages) == limit,
+                "oldest_id": messages[-1]["id"] if messages else None,
+            }
+        except discord.Forbidden:
+            return {"error": f"No permission to read channel #{channel.name}"}
+        except Exception as e:
+            logger.error(f"Channel history error: {e}")
+            return {"error": str(e)}
+
+    # =========================================================================
+    # MESSAGE CONTEXT - Messages around a specific message
+    # =========================================================================
+
+    async def get_message_context(
+        self,
+        channel: discord.TextChannel,
+        message_id: int,
+        before_count: int = 5,
+        after_count: int = 5,
+    ) -> Dict[str, Any]:
+        """
+        Get messages around a specific message for context.
+
+        Args:
+            channel: The Discord channel
+            message_id: The target message ID
+            before_count: Number of messages before (default 5)
+            after_count: Number of messages after (default 5)
+
+        Returns:
+            The target message with surrounding context
+        """
+        try:
+            # Fetch the target message
+            try:
+                target_msg = await channel.fetch_message(message_id)
+            except discord.NotFound:
+                return {"error": f"Message {message_id} not found"}
+
+            # Fetch messages before
+            before_msgs = []
+            async for msg in channel.history(limit=before_count, before=target_msg):
+                before_msgs.append(msg)
+            before_msgs.reverse()  # Chronological order
+
+            # Fetch messages after
+            after_msgs = []
+            async for msg in channel.history(limit=after_count, after=target_msg, oldest_first=True):
+                after_msgs.append(msg)
+
+            def format_msg(msg):
+                return {
+                    "id": str(msg.id),
+                    "content": msg.content[:500] if msg.content else "",
+                    "author": msg.author.name,
+                    "author_id": str(msg.author.id),
+                    "timestamp": msg.created_at.isoformat(),
+                    "jump_url": msg.jump_url,
+                }
+
+            return {
+                "success": True,
+                "channel": channel.name,
+                "before": [format_msg(m) for m in before_msgs],
+                "target": format_msg(target_msg),
+                "after": [format_msg(m) for m in after_msgs],
+            }
+        except discord.Forbidden:
+            return {"error": f"No permission to read channel #{channel.name}"}
+        except Exception as e:
+            logger.error(f"Message context error: {e}")
+            return {"error": str(e)}
+
+    # =========================================================================
+    # THREAD HISTORY - Full thread with metadata and pagination
+    # =========================================================================
+
+    async def get_thread_history(
+        self,
+        thread: discord.Thread,
+        limit: int = 50,
+        before: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get thread messages with metadata summary.
+
+        Args:
+            thread: The Discord thread
+            limit: Number of messages to fetch (default 50, max 100)
+            before: Get messages before this message ID (for pagination)
+
+        Returns:
+            Thread metadata and recent messages
+        """
+        try:
+            limit = min(limit, 100)
+            messages = []
+
+            # Build fetch parameters
+            kwargs = {"limit": limit}
+            if before:
+                kwargs["before"] = discord.Object(id=before)
+
+            # Collect unique participants
+            participants = {}
+
+            async for msg in thread.history(**kwargs):
+                messages.append({
+                    "id": str(msg.id),
+                    "content": msg.content[:500] if msg.content else "",
+                    "author": msg.author.name,
+                    "author_id": str(msg.author.id),
+                    "timestamp": msg.created_at.isoformat(),
+                    "attachments": len(msg.attachments),
+                    "jump_url": msg.jump_url,
+                })
+                # Track participants
+                if str(msg.author.id) not in participants:
+                    participants[str(msg.author.id)] = msg.author.name
+
+            return {
+                "success": True,
+                "thread_name": thread.name,
+                "thread_id": str(thread.id),
+                "parent_channel": thread.parent.name if thread.parent else None,
+                "owner_id": str(thread.owner_id) if thread.owner_id else None,
+                "created_at": thread.created_at.isoformat() if thread.created_at else None,
+                "archived": thread.archived,
+                "locked": thread.locked,
+                "total_messages": thread.message_count,
+                "participants": list(participants.values()),
+                "participant_count": len(participants),
+                "showing": len(messages),
+                "messages": messages,
+                "has_more": len(messages) == limit,
+                "oldest_id": messages[-1]["id"] if messages else None,
+                "note": f"Showing {len(messages)} of ~{thread.message_count} messages. Use before={messages[-1]['id']} to get older messages." if messages and thread.message_count and len(messages) < thread.message_count else None,
+            }
+        except discord.Forbidden:
+            return {"error": f"No permission to read thread '{thread.name}'"}
+        except Exception as e:
+            logger.error(f"Thread history error: {e}")
+            return {"error": str(e)}
+
+
 # Singleton instance
 discord_search_client = DiscordSearchClient()
 
@@ -475,6 +719,8 @@ async def tool_discord_search(
     role_id: Optional[int] = None,
     role_name: Optional[str] = None,
     channel_type: Optional[str] = None,
+    message_id: Optional[int] = None,
+    thread_id: Optional[int] = None,
     include_archived: bool = True,
     include_members: bool = False,
     has: Optional[str] = None,
@@ -494,20 +740,25 @@ async def tool_discord_search(
         - channels: Search channels by name or type
         - threads: Search threads by name
         - roles: Search roles by name
+        - history: Get recent messages from a channel (no query needed)
+        - context: Get messages around a specific message_id
+        - thread_history: Get messages from a thread with metadata
 
     Args:
-        action: What to search (messages, members, channels, threads, roles)
-        query: Search term (required for messages)
-        channel_id: Filter messages to specific channel
+        action: What to search (messages, members, channels, threads, roles, history, context, thread_history)
+        query: Search term (required for messages). Mentions like <@123> are auto-parsed.
+        channel_id: Filter messages to specific channel, or target for history
         channel_name: Find channel by name (alternative to channel_id)
         user_id: Look up member by ID, or filter messages by author
         role_id: Filter members by role
         role_name: Find role by name (alternative to role_id)
         channel_type: Filter channels by type (text, voice, forum, category)
+        message_id: Target message for context action
+        thread_id: Target thread for thread_history action
         include_archived: Include archived threads (default True)
         include_members: Include member list for roles (default False)
         has: Filter messages by attachment type (link, embed, file, video, image)
-        before: Messages before this date/snowflake
+        before: Messages before this date/snowflake (also for pagination)
         after: Messages after this date/snowflake
         limit: Max results (default 25)
 
@@ -544,6 +795,20 @@ async def tool_discord_search(
                     accessible_channel_ids.add(ch.id)
 
     action = action.lower()
+
+    # AUTO-PARSE MENTIONS from query string
+    # Extracts IDs from <@123>, <#123>, <@&123> formats
+    if query:
+        mentions = parse_discord_mentions(query)
+        # Auto-set user_id if mentioned and not already set
+        if mentions["user_ids"] and not user_id:
+            user_id = mentions["user_ids"][0]
+        # Auto-set channel_id if mentioned and not already set
+        if mentions["channel_ids"] and not channel_id:
+            channel_id = mentions["channel_ids"][0]
+        # Auto-set role_id if mentioned and not already set
+        if mentions["role_ids"] and not role_id:
+            role_id = mentions["role_ids"][0]
 
     # Resolve channel_name to channel_id if provided (only if user can access it)
     if channel_name and not channel_id:
@@ -622,8 +887,71 @@ async def tool_discord_search(
             limit=limit,
         )
 
+    elif action == "history":
+        # Get recent messages from a channel (no search query needed)
+        if not channel_id:
+            return {"error": "channel_id or channel_name required for history action"}
+        channel = guild.get_channel(channel_id)
+        if not channel:
+            return {"error": f"Channel {channel_id} not found"}
+        if not can_view_channel(channel):
+            return {"error": "You don't have permission to view that channel"}
+
+        before_id = int(before) if before else None
+        after_id = int(after) if after else None
+        return await discord_search_client.get_channel_history(
+            channel=channel,
+            limit=limit,
+            before=before_id,
+            after=after_id,
+        )
+
+    elif action == "context":
+        # Get messages around a specific message
+        if not message_id:
+            return {"error": "message_id required for context action"}
+        if not channel_id:
+            return {"error": "channel_id or channel_name required for context action"}
+        channel = guild.get_channel(channel_id)
+        if not channel:
+            return {"error": f"Channel {channel_id} not found"}
+        if not can_view_channel(channel):
+            return {"error": "You don't have permission to view that channel"}
+
+        return await discord_search_client.get_message_context(
+            channel=channel,
+            message_id=message_id,
+            before_count=min(limit // 2, 10),
+            after_count=min(limit // 2, 10),
+        )
+
+    elif action == "thread_history":
+        # Get messages from a thread with metadata
+        if not thread_id:
+            return {"error": "thread_id required for thread_history action"}
+
+        # Try to get thread from guild
+        thread = guild.get_thread(thread_id)
+        if not thread:
+            # Try fetching it
+            try:
+                thread = await guild.fetch_channel(thread_id)
+            except Exception:
+                return {"error": f"Thread {thread_id} not found"}
+
+        # SECURITY: Check if user can view parent channel
+        if thread.parent and not can_view_channel(thread.parent):
+            return {"error": "You don't have permission to view that thread"}
+
+        before_id = int(before) if before else None
+        return await discord_search_client.get_thread_history(
+            thread=thread,
+            limit=limit,
+            before=before_id,
+        )
+
     else:
         return {
             "error": f"Unknown action: {action}",
-            "valid_actions": ["messages", "members", "channels", "threads", "roles"],
+            "valid_actions": ["messages", "members", "channels", "threads", "roles", "history", "context", "thread_history"],
         }

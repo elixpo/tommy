@@ -668,7 +668,7 @@ DISCORD_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "discord_search",
-        "description": """Search EVERYTHING in the Discord server.
+        "description": """Search EVERYTHING in the Discord server. Mentions like <@123> are auto-parsed.
 
 Actions:
 - messages: Search message content (query required) - find past discussions, decisions, context
@@ -676,23 +676,26 @@ Actions:
 - channels: Search channels by name or type (text, voice, forum, category)
 - threads: Search threads by name (includes archived)
 - roles: Search roles by name, optionally include member lists
+- history: Get recent messages from a channel (no query needed) - "what's happening in #dev?"
+- context: Get messages around a specific message_id - conversation context
+- thread_history: Get thread messages with metadata + pagination - "show me that discussion thread"
 
-Use for: "what did we discuss about X?", "who has role Y?", "find the channel for Z", "search messages from user".""",
+Use for: "what did we discuss about X?", "who has role Y?", "find the channel for Z", "recent messages in #general", "<@user> said something about...".""",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["messages", "members", "channels", "threads", "roles"],
-                    "description": "What to search"
+                    "enum": ["messages", "members", "channels", "threads", "roles", "history", "context", "thread_history"],
+                    "description": "What to search or fetch"
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search term (required for messages, optional for others)"
+                    "description": "Search term (required for messages). Mentions like <@123>, <#456>, <@&789> are auto-parsed to extract IDs."
                 },
                 "channel_id": {
                     "type": "integer",
-                    "description": "Filter messages to specific channel"
+                    "description": "Target channel for messages/history/context actions"
                 },
                 "channel_name": {
                     "type": "string",
@@ -700,7 +703,7 @@ Use for: "what did we discuss about X?", "who has role Y?", "find the channel fo
                 },
                 "user_id": {
                     "type": "integer",
-                    "description": "Look up member by ID (action=members), or filter messages by author (action=messages)"
+                    "description": "Look up member by ID (action=members), or filter messages by author"
                 },
                 "role_id": {
                     "type": "integer",
@@ -709,6 +712,14 @@ Use for: "what did we discuss about X?", "who has role Y?", "find the channel fo
                 "role_name": {
                     "type": "string",
                     "description": "Find role by name (alternative to role_id)"
+                },
+                "message_id": {
+                    "type": "integer",
+                    "description": "Target message for context action"
+                },
+                "thread_id": {
+                    "type": "integer",
+                    "description": "Target thread for thread_history action"
                 },
                 "channel_type": {
                     "type": "string",
@@ -730,15 +741,15 @@ Use for: "what did we discuss about X?", "who has role Y?", "find the channel fo
                 },
                 "before": {
                     "type": "string",
-                    "description": "Messages before this date (YYYY-MM-DD) or message ID"
+                    "description": "Messages before this date/ID (also for pagination in history/thread_history)"
                 },
                 "after": {
                     "type": "string",
-                    "description": "Messages after this date (YYYY-MM-DD) or message ID"
+                    "description": "Messages after this date/ID"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max results (default 25)"
+                    "description": "Max results (default 25, max 100 for history)"
                 }
             },
             "required": ["action"]
