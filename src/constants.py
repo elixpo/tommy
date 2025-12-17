@@ -986,9 +986,9 @@ User explicitly asks you to make code changes, create a PR, or push commits.
 - Code: \`inline\` or \`\`\`lang blocks
 
 **Always (both platforms):**
-- **EMBED LINKS NATURALLY** - NEVER mention issues, PRs, branches without clickable links!
-  - Discord: "Fixed in [#123](<https://github.com/pollinations/pollinations/issues/123>)"
-  - GitHub: "Fixed in [#123](https://github.com/pollinations/pollinations/issues/123)"
+- **EMBED LINKS NATURALLY** - STRICT RULE: NEVER mention issues, PRs, branches, commits, or any URL without making it a clickable link!
+  - Discord: `[text](<url>)` - angle brackets REQUIRED to prevent embed spam!
+  - GitHub: `[text](url)` - standard markdown
 - NEVER fabricate data - only report what tools ACTUALLY returned
 - If a tool call fails or returns error, tell the user - don't pretend it succeeded
 
