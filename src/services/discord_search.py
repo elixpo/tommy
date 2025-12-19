@@ -817,7 +817,7 @@ async def tool_discord_search(
     def user_can_view(channel) -> bool:
         """Check if the requesting user has permission to view a channel."""
         if not requesting_member:
-            return True  # No user context = show all (bot-only access)
+            return False  # SECURITY: No user context = deny access (can't verify perms)
         perms = channel.permissions_for(requesting_member)
         return perms.view_channel
 
