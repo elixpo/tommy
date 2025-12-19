@@ -888,7 +888,8 @@ async def process_message(
         "user_id": user.id,
         "user_name": str(user),
         "reporter": session.original_author_name,
-        "channel_id": channel.id,
+        "channel_id": channel.parent_id if hasattr(channel, 'parent_id') and channel.parent_id else channel.id,  # Parent channel if in thread
+        "thread_id": channel.id if hasattr(channel, 'parent_id') and channel.parent_id else None,  # Current thread if any
         "guild_id": channel.guild.id if hasattr(channel, 'guild') and channel.guild else None,
         "user_role_ids": [r.id for r in user.roles] if isinstance(user, discord.Member) else [],
         # For github_issue create - link back to Discord message
