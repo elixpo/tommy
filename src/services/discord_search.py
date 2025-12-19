@@ -713,14 +713,14 @@ discord_search_client = DiscordSearchClient()
 async def tool_discord_search(
     action: str,
     query: Optional[str] = None,
-    channel_id: Optional[int] = None,
+    channel_id: Optional[Union[int, str]] = None,  # Accept string for <#123> format
     channel_name: Optional[str] = None,
-    user_id: Optional[int] = None,
-    role_id: Optional[int] = None,
+    user_id: Optional[Union[int, str]] = None,  # Accept string for <@123> format
+    role_id: Optional[Union[int, str]] = None,  # Accept string for <@&123> format
     role_name: Optional[str] = None,
     channel_type: Optional[str] = None,
-    message_id: Optional[int] = None,
-    thread_id: Optional[int] = None,
+    message_id: Optional[Union[int, str]] = None,
+    thread_id: Optional[Union[int, str]] = None,
     include_archived: bool = True,
     include_members: bool = False,
     has: Optional[str] = None,
@@ -772,6 +772,30 @@ async def tool_discord_search(
     guild = _context.get("discord_guild")
     if not guild:
         return {"error": "Discord guild not available in context"}
+
+    # Parse ID params - AI might pass "<#123>" instead of just 123
+    def extract_id(value: Optional[Union[int, str]], pattern: str) -> Optional[int]:
+        """Extract numeric ID from value, handling mention formats."""
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        # Try parsing as plain int
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            pass
+        # Try extracting from mention format
+        match = re.search(pattern, str(value))
+        if match:
+            return int(match.group(1))
+        return None
+
+    channel_id = extract_id(channel_id, r'<#(\d+)>')
+    user_id = extract_id(user_id, r'<@!?(\d+)>')
+    role_id = extract_id(role_id, r'<@&(\d+)>')
+    message_id = extract_id(message_id, r'(\d+)')
+    thread_id = extract_id(thread_id, r'(\d+)')
 
     # SECURITY: Get the requesting user to filter results by their permissions
     requesting_user_id = _context.get("user_id")
