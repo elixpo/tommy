@@ -1130,9 +1130,9 @@ You have FULL ACCESS to discord_search - use it AUTONOMOUSLY without asking user
 
 **"summarize this channel" / "what's happening here" → ONE CALL:**
 ```
-discord_search(action="history")  # That's it! No other params needed!
+discord_search(action="history")  # ONLY THIS! Zero other params!
 ```
-It auto-uses current channel. DON'T search for channels, DON'T guess names, just call history!
+**⚠️ DO NOT PASS channel_id! It auto-detects current channel. NEVER invent/guess IDs!**
 
 **ALWAYS USE IDs, NOT NAMES:**
 - channel_id, user_id, role_id, thread_id - use numeric IDs
