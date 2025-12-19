@@ -506,11 +506,11 @@ class GitHubGraphQL:
         elif state == "closed":
             state_filter = "is:closed"
 
-        # Search for "Created via Discord" AND the username
-        search_query = f'repo:{config.github_repo} is:issue {state_filter} "Created via Discord" "{discord_username}"'
+        # Search for Discord author marker AND the username
+        search_query = f'repo:{config.github_repo} is:issue {state_filter} "**Author:**" "{discord_username}"'
 
         return await self.search_issues_full(
-            keywords=f'"Created via Discord" "{discord_username}"',
+            keywords=f'"**Author:**" "{discord_username}"',
             state=state,
             limit=limit
         )

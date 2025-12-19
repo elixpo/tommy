@@ -168,8 +168,8 @@ class GitHubManager:
         Returns:
             List of issues created via Discord
         """
-        # Search for the Discord footer marker
-        keywords = '"Created via Discord"'
+        # Search for issues with Discord author marker
+        keywords = '"**Author:**"'
         if discord_username:
             keywords += f' "{discord_username}"'
 
@@ -995,8 +995,6 @@ class GitHubManager:
         # Add link back to the Discord message
         if message_url:
             body += f"\n**Source:** [View on Discord]({message_url})"
-
-        body += "\n\n*Created via Discord*"
 
         return body
 
