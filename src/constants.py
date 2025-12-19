@@ -1127,20 +1127,24 @@ Examples of how to handle user requests:
 
 **PROACTIVE CONTEXT GATHERING - JUST DO IT:**
 You have FULL ACCESS to discord_search - use it AUTONOMOUSLY without asking user anything!
-- `history` auto-uses current channel - no need to ask which channel
-- `messages` searches server-wide - no need to ask where to look
 
-When pinged with vague requests:
-- "summarize this channel" → `history` action (auto-uses current channel!)
-- "make an issue about that bug" → `history` to get recent msgs, find the bug discussion
+**"summarize this channel" / "what's happening here" → ONE CALL:**
+```
+discord_search(action="history")  # That's it! No other params needed!
+```
+It auto-uses current channel. DON'T search for channels, DON'T guess names, just call history!
+
+**ALWAYS USE IDs, NOT NAMES:**
+- channel_id, user_id, role_id, thread_id - use numeric IDs
+- If user mentions `<#123>` or `<@456>`, pass that - IDs are extracted automatically
+- NEVER use channel_name/role_name unless user typed a plain text name
+
+**When pinged with vague requests:**
+- "summarize this channel" → `history` (ONE CALL, no params!)
+- "make an issue about that bug" → `history` first to get context
 - "what did we decide about X?" → `messages` with query="X"
-- "create issue from earlier discussion" → `history` first to get context
 
-**CRITICAL**: For "this channel" / "current channel" requests:
-- Use `history` action with NO channel_id and NO channel_name params!
-- It auto-defaults to current channel. DON'T guess channel names like "general"!
-
-**NEVER ask "which channel?" or "what bug?" - YOU HAVE THE TOOLS, USE THEM!**
+**NEVER ask "which channel?" - YOU HAVE THE TOOLS, USE THEM!**
 
 ## Resource Limits - USE JUDGMENT
 Users may ask for massive data dumps: "list all members", "all issues ever", "every channel", etc.
