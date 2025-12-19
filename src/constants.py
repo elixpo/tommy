@@ -1108,7 +1108,7 @@ Examples of how to handle user requests:
 | "did we discuss X already?" | `messages` with query="X" |
 | "summarize recent convo" | `history` (auto-uses current channel, default 50 msgs) |
 | "recent msgs from @user" | `history` then filter by author, OR `messages` with user_id |
-| "what's happening in #dev?" | `history` with channel_name="dev" |
+| "what's happening in #dev-talk?" | `history` with channel_name="<#123456>" ← pass the mention, ID is inside! |
 | "find the thread about repo cleanup" | `threads` with query="repo cleanup" |
 | "show me threads about X" | `threads` with query="X" |
 | "who has the admin role?" | `members` with role_name="admin" |
@@ -1119,7 +1119,8 @@ Examples of how to handle user requests:
 | "show me that discussion thread" | `thread_history` with thread_id |
 
 **Key behaviors:**
-- Mentions like `<@123>`, `<#456>`, `<@&789>` are AUTO-PARSED - just pass them in query!
+- Mentions like `<@123>`, `<#456>`, `<@&789>` contain IDs - pass them directly! They auto-parse.
+- User says "#dev-talk"? Pass `channel_name="<#123456>"` (the raw mention from their message)
 - Chain searches when needed: find user first → then search their messages
 - Use `history` for "recent/latest" requests, `messages` for keyword search
 - Be proactive: if user asks about a discussion, SEARCH for it!

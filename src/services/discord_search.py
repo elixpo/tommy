@@ -810,6 +810,12 @@ async def tool_discord_search(
         if mentions["role_ids"] and not role_id:
             role_id = mentions["role_ids"][0]
 
+    # Also parse channel_name in case AI passed <#123> format there
+    if channel_name and not channel_id:
+        ch_mentions = parse_discord_mentions(channel_name)
+        if ch_mentions["channel_ids"]:
+            channel_id = ch_mentions["channel_ids"][0]
+
     # Resolve channel_name to channel_id if provided (only if user can access it)
     if channel_name and not channel_id:
         for ch in guild.channels:
