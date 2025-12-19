@@ -797,23 +797,40 @@ async def tool_discord_search(
     message_id = extract_id(message_id, r'(\d+)')
     thread_id = extract_id(thread_id, r'(\d+)')
 
-    # Get bot member for permission checks (bot has admin, can access all channels)
+    # Get bot member for permission checks
     bot = _context.get("discord_bot")
     bot_member = guild.me if guild else None
 
-    # Helper to check if BOT can view a channel (not user - bot has admin perms)
-    def can_view_channel(channel) -> bool:
+    # Get requesting user for filtering results (don't show them channels they can't see)
+    requesting_user_id = _context.get("user_id")
+    requesting_member = guild.get_member(requesting_user_id) if requesting_user_id else None
+
+    # Helper to check if BOT can access a channel (for fetching)
+    def bot_can_access(channel) -> bool:
         """Check if the bot has permission to view a channel."""
         if not bot_member:
             return True  # Assume yes if we can't check
         perms = channel.permissions_for(bot_member)
         return perms.view_channel
 
-    # Get list of channel IDs bot can access (for message search filtering)
+    # Helper to check if USER can view a channel (for filtering results)
+    def user_can_view(channel) -> bool:
+        """Check if the requesting user has permission to view a channel."""
+        if not requesting_member:
+            return True  # No user context = show all (bot-only access)
+        perms = channel.permissions_for(requesting_member)
+        return perms.view_channel
+
+    # Combined check: bot can fetch AND user can see results
+    def can_view_channel(channel) -> bool:
+        """Check if bot can access AND user can view (for security filtering)."""
+        return bot_can_access(channel) and user_can_view(channel)
+
+    # Get list of channel IDs user can access (for message search filtering)
     accessible_channel_ids = set()
     for ch in guild.channels:
         if hasattr(ch, 'permissions_for'):
-            if not bot_member or ch.permissions_for(bot_member).view_channel:
+            if can_view_channel(ch):
                 accessible_channel_ids.add(ch.id)
 
     action = action.lower()
