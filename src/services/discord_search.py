@@ -726,7 +726,7 @@ async def tool_discord_search(
     has: Optional[str] = None,
     before: Optional[str] = None,
     after: Optional[str] = None,
-    limit: int = 25,
+    limit: int = 50,
     # Context injected by pollinations client
     _context: dict = None,
     **kwargs,
@@ -747,7 +747,7 @@ async def tool_discord_search(
     Args:
         action: What to search (messages, members, channels, threads, roles, history, context, thread_history)
         query: Search term (required for messages). Mentions like <@123> are auto-parsed.
-        channel_id: Filter messages to specific channel, or target for history
+        channel_id: Filter messages to specific channel, or target for history (defaults to CURRENT channel if not specified)
         channel_name: Find channel by name (alternative to channel_id)
         user_id: Look up member by ID, or filter messages by author
         role_id: Filter members by role
@@ -760,7 +760,7 @@ async def tool_discord_search(
         has: Filter messages by attachment type (link, embed, file, video, image)
         before: Messages before this date/snowflake (also for pagination)
         after: Messages after this date/snowflake
-        limit: Max results (default 25)
+        limit: Max results (default 50, can increase if needed)
 
     Returns:
         Search results based on action type
@@ -889,8 +889,9 @@ async def tool_discord_search(
 
     elif action == "history":
         # Get recent messages from a channel (no search query needed)
+        # Default to current channel if not specified
         if not channel_id:
-            return {"error": "channel_id or channel_name required for history action"}
+            channel_id = _context.get("channel_id")
         channel = guild.get_channel(channel_id)
         if not channel:
             return {"error": f"Channel {channel_id} not found"}

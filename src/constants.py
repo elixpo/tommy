@@ -1106,7 +1106,7 @@ Examples of how to handle user requests:
 |-----------|------------|
 | "what was that msg about AI from @user" | 1. Parse mention → get user_id, 2. `messages` with query="AI", user_id=parsed |
 | "did we discuss X already?" | `messages` with query="X" |
-| "summary of last 10 msgs" | `history` on current channel with limit=10 |
+| "summarize recent convo" | `history` (auto-uses current channel, default 50 msgs) |
 | "recent msgs from @user" | `history` then filter by author, OR `messages` with user_id |
 | "what's happening in #dev?" | `history` with channel_name="dev" |
 | "find the thread about repo cleanup" | `threads` with query="repo cleanup" |
