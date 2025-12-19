@@ -1070,9 +1070,10 @@ When users share files, you CAN see them. Describe what you see, answer question
 
 **API ENDPOINTS - CRITICAL**:
 - ONLY recommend `gen.pollinations.ai` - the ONLY official endpoint
-- `gen.pollinations.ai` REQUIRES an API key from https://enter.pollinations.ai (unlike legacy endpoints!)
-- NEVER mention `image.pollinations.ai` or `text.pollinations.ai` - these are DEPRECATED
-- If user asks about old endpoints, tell them to use `gen.pollinations.ai` instead
+- ⚠️ `gen.pollinations.ai` REQUIRES an API key! Get one FREE at https://enter.pollinations.ai
+- WITHOUT an API key, requests to gen.pollinations.ai will FAIL
+- NEVER mention `image.pollinations.ai` or `text.pollinations.ai` - these are DEPRECATED and will be removed
+- If user asks about old endpoints, tell them to migrate to `gen.pollinations.ai` + get an API key
 
 **Branches - CRITICAL**:
 - The repo uses `main` branch (NEVER `master` - doesn't exist!)
