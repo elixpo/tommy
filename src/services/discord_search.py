@@ -802,8 +802,19 @@ async def tool_discord_search(
     bot_member = guild.me if guild else None
 
     # Get requesting user for filtering results (don't show them channels they can't see)
+    # SECURITY CRITICAL: Must verify user permissions to prevent leaking private channels
     requesting_user_id = _context.get("user_id")
     requesting_member = guild.get_member(requesting_user_id) if requesting_user_id else None
+
+    # If member not in cache, MUST fetch them for accurate permission check
+    if not requesting_member and requesting_user_id:
+        try:
+            requesting_member = await guild.fetch_member(requesting_user_id)
+            logger.info(f"Fetched member {requesting_user_id} for permission check")
+        except discord.NotFound:
+            logger.warning(f"SECURITY: User {requesting_user_id} not found in guild - restricting to public channels only")
+        except Exception as e:
+            logger.warning(f"SECURITY: Failed to fetch member {requesting_user_id}: {e} - restricting to public channels only")
 
     # Helper to check if BOT can access a channel (for fetching)
     def bot_can_access(channel) -> bool:
@@ -814,12 +825,21 @@ async def tool_discord_search(
         return perms.view_channel
 
     # Helper to check if USER can view a channel (for filtering results)
+    # SECURITY: This is the critical permission gate
     def user_can_view(channel) -> bool:
         """Check if the requesting user has permission to view a channel."""
-        if not requesting_member:
-            return False  # SECURITY: No user context = deny access (can't verify perms)
-        perms = channel.permissions_for(requesting_member)
-        return perms.view_channel
+        if requesting_member:
+            # Have member - check their actual permissions
+            perms = channel.permissions_for(requesting_member)
+            return perms.view_channel
+        else:
+            # SECURITY: No member context - ONLY allow public channels
+            # Public = @everyone role has explicit view_channel permission
+            everyone_role = guild.default_role
+            if everyone_role:
+                perms = channel.permissions_for(everyone_role)
+                return perms.view_channel
+            return False  # No @everyone role = deny
 
     # Combined check: bot can fetch AND user can see results
     def can_view_channel(channel) -> bool:
