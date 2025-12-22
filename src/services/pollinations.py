@@ -164,6 +164,7 @@ class PollinationsClient:
         discord_username: str,
         thread_history: Optional[list[dict]] = None,
         image_urls: Optional[list[str]] = None,
+        video_urls: Optional[list[str]] = None,
         is_admin: bool = False,
         tool_context: Optional[dict] = None,
     ) -> dict:
@@ -242,11 +243,15 @@ class PollinationsClient:
                     )
                 })
 
-        # Build current user message
-        if image_urls:
+        # Build current user message with media (images and videos)
+        if image_urls or video_urls:
             content = [{"type": "text", "text": f"[{discord_username}]: {user_message}"}]
-            for url in image_urls[:3]:
+            # Add images (Discord allows max 10 attachments per message)
+            for url in (image_urls or [])[:10]:
                 content.append({"type": "image_url", "image_url": {"url": url}})
+            # Add videos - YouTube, GIFs, Discord video attachments
+            for url in (video_urls or [])[:10]:
+                content.append({"type": "video_url", "video_url": {"url": url}})
             messages.append({"role": "user", "content": content})
         else:
             messages.append({

@@ -46,34 +46,78 @@ def is_admin(user: discord.User | discord.Member) -> bool:
     return False
 
 
-def extract_attachment_urls(message: discord.Message) -> list[str]:
-    """
-    Extract ALL attachment URLs from Discord message.
+# Video file extensions and domains
+VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.gif'}
+VIDEO_DOMAINS = {'youtube.com', 'youtu.be', 'vimeo.com', 'twitch.tv', 'streamable.com'}
 
-    The AI model can understand images, PDFs, and other files via their CDN URLs
-    when passed in OpenAI image_url format. So we grab everything, not just images.
+
+def is_video_url(url: str) -> bool:
+    """Check if URL points to a video (by extension or domain)."""
+    url_lower = url.lower()
+    # Check file extension
+    for ext in VIDEO_EXTENSIONS:
+        if ext in url_lower:
+            return True
+    # Check video hosting domains
+    for domain in VIDEO_DOMAINS:
+        if domain in url_lower:
+            return True
+    return False
+
+
+def extract_media_urls(message: discord.Message) -> tuple[list[str], list[str]]:
+    """
+    Extract media URLs from Discord message, separating images from videos.
+
+    Returns:
+        Tuple of (image_urls, video_urls)
 
     Handles:
     - Direct attachments (uploaded files)
     - Embedded images (from links)
-    - GIFs from tenor/giphy (embed.video.url contains the actual GIF)
+    - YouTube/video links (embed.video.url or embed.url)
+    - GIFs (treated as video)
+    - Tenor/Giphy GIFs
     """
-    urls = []
-    # All attachments (images, PDFs, files, etc.)
+    image_urls = []
+    video_urls = []
+
+    # Process attachments
     for attachment in message.attachments:
-        urls.append(attachment.url)
-    # Also grab embedded images and GIFs
+        url = attachment.url
+        if is_video_url(url):
+            video_urls.append(url)
+        else:
+            image_urls.append(url)
+
+    # Process embeds
     for embed in message.embeds:
+        # YouTube and other video embeds - check embed.url first (the actual link)
+        if embed.url and is_video_url(embed.url):
+            video_urls.append(embed.url)
+        # Video embed URL (Tenor/Giphy GIFs, video players)
+        elif embed.video and embed.video.url:
+            video_urls.append(embed.video.url)
         # Regular embedded images
-        if embed.image and embed.image.url:
-            urls.append(embed.image.url)
-        # Tenor/Giphy GIFs come as video embeds - grab the actual GIF URL
-        if embed.video and embed.video.url:
-            urls.append(embed.video.url)
-        # Thumbnail as fallback (static preview)
-        elif embed.thumbnail and embed.thumbnail.url:
-            urls.append(embed.thumbnail.url)
-    return urls
+        elif embed.image and embed.image.url:
+            if is_video_url(embed.image.url):
+                video_urls.append(embed.image.url)
+            else:
+                image_urls.append(embed.image.url)
+        # Thumbnail as fallback (static preview) - only if not a video embed
+        elif embed.thumbnail and embed.thumbnail.url and not embed.video:
+            image_urls.append(embed.thumbnail.url)
+
+    return image_urls, video_urls
+
+
+def extract_attachment_urls(message: discord.Message) -> list[str]:
+    """
+    Extract ALL attachment URLs from Discord message (legacy, returns combined list).
+    Use extract_media_urls() for separated image/video lists.
+    """
+    image_urls, video_urls = extract_media_urls(message)
+    return image_urls + video_urls
 
 
 # Keep old name for backward compatibility
@@ -451,10 +495,10 @@ async def assist_context_menu(interaction: discord.Interaction, message: discord
     await interaction.response.defer(ephemeral=True, thinking=False)
 
     text = message.content or ""
-    image_urls = extract_image_urls(message)
+    image_urls, video_urls = extract_media_urls(message)
 
-    if not text and image_urls:
-        text = "[User attached screenshot(s)]"
+    if not text and (image_urls or video_urls):
+        text = "[User attached media]"
     elif not text:
         text = "[User mentioned bot without text - greet them or ask how you can help]"
 
@@ -471,7 +515,7 @@ async def assist_context_menu(interaction: discord.Interaction, message: discord
                 user_name=str(message.author),
                 initial_message=text,
                 topic_summary=pollinations_client.get_topic_summary_fast(text),
-                image_urls=image_urls
+                image_urls=image_urls + video_urls  # Combined for session storage
             )
 
         # Add to session and process like a normal thread message
@@ -481,7 +525,7 @@ async def assist_context_menu(interaction: discord.Interaction, message: discord
             content=text,
             author=str(message.author),
             author_id=message.author.id,
-            image_urls=image_urls
+            image_urls=image_urls + video_urls  # Combined for session storage
         )
 
         async with message.channel.typing():
@@ -493,11 +537,12 @@ async def assist_context_menu(interaction: discord.Interaction, message: discord
                 image_urls=image_urls,
                 session=session,
                 thread_history=thread_history,
-                source_message=message
+                source_message=message,
+                video_urls=video_urls
             )
     else:
         # Not in thread - create one (normal flow)
-        await start_conversation(message, text, image_urls)
+        await start_conversation(message, text, image_urls, video_urls)
 
 
 @bot.event
@@ -640,13 +685,13 @@ async def on_message(message: discord.Message):
     if message.reference and message.reference.message_id:
         text = await handle_reply_context(message, text, ref_msg)
 
-    image_urls = extract_image_urls(message)
+    image_urls, video_urls = extract_media_urls(message)
 
-    # If no text but replying or has images, let AI handle it
-    if not text and not image_urls:
+    # If no text but replying or has images/videos, let AI handle it
+    if not text and not image_urls and not video_urls:
         text = "[User mentioned bot without text - greet them or ask how you can help]"
-    if not text and image_urls:
-        text = "[User attached screenshot(s)]"
+    if not text and (image_urls or video_urls):
+        text = "[User attached media]"
 
     # Check if message already has a thread - if so, respond there instead of creating new
     if hasattr(message, 'thread') and message.thread:
@@ -662,7 +707,7 @@ async def on_message(message: discord.Message):
                 user_name=str(message.author),
                 initial_message=text,
                 topic_summary=topic,
-                image_urls=image_urls
+                image_urls=image_urls + video_urls  # Combined for session storage
             )
         async with thread.typing():
             await process_message(
@@ -671,12 +716,13 @@ async def on_message(message: discord.Message):
                 text=text,
                 image_urls=image_urls,
                 session=session,
-                reply_to=None
+                reply_to=None,
+                video_urls=video_urls
             )
         return
 
     # Create thread and start new conversation
-    await start_conversation(message, text, image_urls)
+    await start_conversation(message, text, image_urls, video_urls)
 
 
 async def handle_dm_message(message: discord.Message):
@@ -770,8 +816,9 @@ async def handle_reply_context(message: discord.Message, text: str, ref_msg: dis
     return text
 
 
-async def start_conversation(message: discord.Message, text: str, image_urls: list[str]):
+async def start_conversation(message: discord.Message, text: str, image_urls: list[str], video_urls: Optional[list[str]] = None):
     """Start a new conversation in a thread."""
+    video_urls = video_urls or []
     # Quick topic extraction for thread name
     topic = pollinations_client.get_topic_summary_fast(text)
     thread_name = f"Issue: {topic}"[:100]
@@ -797,7 +844,7 @@ async def start_conversation(message: discord.Message, text: str, image_urls: li
         user_name=str(message.author),
         initial_message=text,
         topic_summary=topic,
-        image_urls=image_urls
+        image_urls=image_urls + video_urls  # Combined for session storage
     )
 
     # Process the message with tool calling
@@ -808,13 +855,14 @@ async def start_conversation(message: discord.Message, text: str, image_urls: li
             text=text,
             image_urls=image_urls,
             session=session,
-            source_message=message
+            source_message=message,
+            video_urls=video_urls
         )
 
 
 async def handle_thread_message(message: discord.Message, session: ConversationSession):
     """Handle a message in an existing thread."""
-    image_urls = extract_image_urls(message)
+    image_urls, video_urls = extract_media_urls(message)
 
     # Check if there's a pending confirmation for this thread and validate user
     thread_id = str(message.channel.id)
@@ -847,7 +895,7 @@ async def handle_thread_message(message: discord.Message, session: ConversationS
         content=message.content,
         author=str(message.author),
         author_id=message.author.id,
-        image_urls=image_urls
+        image_urls=image_urls + video_urls  # Combined for session storage
     )
 
     async with message.channel.typing():
@@ -862,7 +910,8 @@ async def handle_thread_message(message: discord.Message, session: ConversationS
             session=session,
             thread_history=thread_history,
             reply_to=message,  # Reply to user's message so they get pinged
-            source_message=message
+            source_message=message,
+            video_urls=video_urls
         )
 
 
@@ -874,7 +923,8 @@ async def process_message(
     session: ConversationSession,
     thread_history: Optional[list[dict]] = None,
     reply_to: Optional[discord.Message] = None,
-    source_message: Optional[discord.Message] = None
+    source_message: Optional[discord.Message] = None,
+    video_urls: Optional[list[str]] = None
 ):
     """
     Process a message using native tool calling.
@@ -921,6 +971,7 @@ async def process_message(
             discord_username=str(user),
             thread_history=thread_history,
             image_urls=image_urls,
+            video_urls=video_urls or [],
             is_admin=user_is_admin,
             tool_context=tool_context
         )
