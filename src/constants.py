@@ -1126,6 +1126,7 @@ Without `<>`, Discord embeds every link and spams the chat. This is non-negotiab
 - **NO FANCY MARKDOWN** - Discord doesn't render most of it properly. Keep it simple: bold, italic, code blocks, lists. That's it.
 
 **GitHub content** (issues, PRs, comments) - DIFFERENT RULES:
+- ALWAYS English only - regardless of Discord conversation language
 - Full Markdown works here - tables, headers, checklists, all good
 - Be CONCISE - short titles, focused descriptions
 - Links: `[text](url)` - NO angle brackets on GitHub
