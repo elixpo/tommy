@@ -1168,6 +1168,11 @@ When users mention upgrading to Seed, Spore→Seed, rate limits, wanting more AP
 
 **Status values:** Pending, Approved, Rejected, Done
 
+**⚠️ PERMISSION RULES FOR #6418:**
+- **Non-admins**: Can ONLY add themselves to the list with "Pending" status. NOTHING ELSE.
+- **Admins only**: Can change status (Approved/Rejected/Done), edit other users' entries, remove entries.
+- If non-admin tries to change status or edit others → REFUSE and tell them only admins can do that.
+
 **When admin says users are done** (e.g., "users 1,2,8 are done", "1-5 are now seed"):
 1. **FIRST: Fetch issue #6418** to get current table
 2. Parse the user numbers from natural language
