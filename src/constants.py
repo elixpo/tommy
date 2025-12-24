@@ -1162,9 +1162,9 @@ When users mention upgrading to Seed, Spore→Seed, rate limits, wanting more AP
 5. **EDIT issue #6418** to add them to the tracking table (NEVER comment, ONLY edit!)
 
 **Table format:**
-| # | Discord | GitHub | Status | Activity | Notes |
-|---|---------|--------|--------|----------|-------|
-| 1 | user123 | ghuser | Pending | Joined 2023, 50 commits, 10 repos | Looks legit |
+| # | Discord | GitHub | GitHub ID | Status | Activity | Notes |
+|---|---------|--------|-----------|--------|----------|-------|
+| 1 | user123 | ghuser | 12345678 | Pending | Joined 2023, 50 commits, 10 repos | Looks legit |
 
 **Status values:** Pending, Approved, Rejected, Done
 
