@@ -165,6 +165,7 @@ class PollinationsClient:
         thread_history: Optional[list[dict]] = None,
         image_urls: Optional[list[str]] = None,
         video_urls: Optional[list[str]] = None,
+        file_urls: Optional[list[str]] = None,
         is_admin: bool = False,
         tool_context: Optional[dict] = None,
     ) -> dict:
@@ -244,8 +245,14 @@ class PollinationsClient:
                 })
 
         # Build current user message with media (images and videos)
+        # NOTE: file_urls are NOT sent as media - they're mentioned in text for the AI to use web_scrape on
+        file_urls = file_urls or []
+        file_notice = ""
+        if file_urls:
+            file_notice = f"\n\n[User attached {len(file_urls)} text/code file(s). Use web_scrape(action='fetch_file', file_url='...') to read them:\n" + "\n".join(f"- {url}" for url in file_urls[:5]) + "]"
+
         if image_urls or video_urls:
-            content = [{"type": "text", "text": f"[{discord_username}]: {user_message}"}]
+            content = [{"type": "text", "text": f"[{discord_username}]: {user_message}{file_notice}"}]
             # Add images (Discord allows max 10 attachments per message)
             for url in (image_urls or [])[:10]:
                 content.append({"type": "image_url", "image_url": {"url": url}})
@@ -256,7 +263,7 @@ class PollinationsClient:
         else:
             messages.append({
                 "role": "user",
-                "content": f"[{discord_username}]: {user_message}"
+                "content": f"[{discord_username}]: {user_message}{file_notice}"
             })
 
         # Call API with tools (include admin tools if user is admin)

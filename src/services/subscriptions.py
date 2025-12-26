@@ -293,9 +293,24 @@ class IssueNotifier:
                 # Returns dict {issue_number: issue_data} or {"error": "..."}
                 issues_dict = await github_graphql.get_issues_batch(issue_numbers)
 
-                # Skip if error returned
+                # Skip if error returned (could be non-existent issue)
                 if isinstance(issues_dict, dict) and "error" in issues_dict:
-                    logger.warning(f"Failed to fetch issues: {issues_dict['error']}")
+                    error_msg = issues_dict['error']
+                    logger.warning(f"Failed to fetch issues: {error_msg}")
+
+                    # If specific issue doesn't exist, try to identify and remove it
+                    if "Could not resolve to an Issue" in error_msg:
+                        # Try fetching issues one by one to find the bad one
+                        for issue_num in issue_numbers:
+                            single_result = await github_graphql.get_issues_batch([issue_num])
+                            if isinstance(single_result, dict) and "error" in single_result:
+                                logger.warning(f"Issue #{issue_num} doesn't exist - removing all subscriptions")
+                                # Get all subscribers and unsubscribe them
+                                subs = await self.subscriptions.get_subscriptions_for_issue(issue_num)
+                                for sub in subs:
+                                    await self.subscriptions.unsubscribe(sub['user_id'], issue_num)
+                                logger.info(f"Removed {len(subs)} subscriptions for non-existent issue #{issue_num}")
+
                     await asyncio.sleep(60)
                     continue
 
