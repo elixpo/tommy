@@ -41,17 +41,9 @@ If they mention legacy endpoints, tell them to migrate to `gen.pollinations.ai`.
   - Flower: 10/hr
   - Nectar: 20/hr
 
-**Models**:
-- `gemini-large` - 1M context, general purpose
-- `claude-large` - Best for coding
-- `claude` - Fast general use
-- `kimi-k2-thinking` - Deep reasoning
-- `perplexity-fast` - Web search
-- `perplexity-reasoning` - Complex search queries
-
 ## Discord
 - **Guild ID**: `885844321461485618`
-- **Server**: https://discord.gg/pollinations
+- **Server**: https://discord.com/invite/pollinations-ai-885844321461485618
 
 ## Project Submissions (APPS label)
 
