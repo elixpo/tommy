@@ -170,20 +170,20 @@ async def scrape_url(
                 regex_patterns=regex_patterns
             )
 
-        # Build content filter
-        cont_filter = None
+        # Build content filter via markdown_generator (0.7.8+ API)
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+        md_generator = None
         if content_filter:
             cont_filter = _build_content_filter(
                 filter_type=content_filter,
                 query=filter_query
             )
+            md_generator = DefaultMarkdownGenerator(content_filter=cont_filter)
 
         # Configure browser
         browser_config = BrowserConfig(
             headless=headless,
             verbose=False,
-            # Stealth options
-            enable_stealth=stealth_mode or magic_mode
         )
 
         # Configure crawl
@@ -194,8 +194,8 @@ async def scrape_url(
             cache_mode=CacheMode.ENABLED if use_cache else CacheMode.DISABLED,
             # Extraction
             extraction_strategy=ext_strategy,
-            # Content filter
-            content_filter=cont_filter,
+            # Markdown generator with content filter
+            markdown_generator=md_generator,
             # JS execution
             js_code=js_code,
             wait_for=wait_for,
