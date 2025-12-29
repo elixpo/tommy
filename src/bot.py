@@ -47,7 +47,7 @@ def is_admin(user: discord.User | discord.Member) -> bool:
 
 
 # Video file extensions and domains
-VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.gif'}
+VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.gif', '.apng'}
 VIDEO_DOMAINS = {'youtube.com', 'youtu.be', 'vimeo.com', 'twitch.tv', 'streamable.com'}
 
 # Text/code file extensions - should NOT be sent as images
@@ -58,8 +58,12 @@ TEXT_FILE_EXTENSIONS = {
     '.c', '.cpp', '.h', '.hpp', '.go', '.rs', '.rb', '.php', '.swift', '.kt'
 }
 
-# Image file extensions - explicitly allowed as images
-IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.ico', '.svg'}
+# Image file extensions - static images only (animated ones like .gif go as video)
+IMAGE_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif', '.ico', '.svg',
+    '.heic', '.heif', '.avif', '.jfif', '.pjpeg', '.pjp',
+    '.raw', '.cr2', '.nef', '.orf', '.sr2', '.dng',  # RAW formats
+}
 
 
 def is_video_url(url: str) -> bool:
