@@ -420,7 +420,7 @@ class GitHubGraphQL:
                     results[num]["comments"] = [
                         {
                             "author": c["author"]["login"] if c.get("author") else "ghost",
-                            "body": c["body"][:500] + "..." if len(c["body"]) > 500 else c["body"],
+                            "body": c["body"],
                             "created_at": c["createdAt"][:10]
                         }
                         for c in issue["comments"].get("nodes", [])
@@ -1378,7 +1378,7 @@ class GitHubGraphQL:
             result["comments"] = [
                 {
                     "author": c["author"]["login"] if c.get("author") else "ghost",
-                    "body": c["body"][:500] + "..." if len(c["body"]) > 500 else c["body"],
+                    "body": c["body"],
                     "created_at": c["createdAt"][:10]
                 }
                 for c in issue["comments"]["nodes"]
@@ -2147,10 +2147,17 @@ class GitHubGraphQL:
         self,
         number: int,
         is_pr: bool = False,
-        limit: int = 10
+        limit: int = 10,
+        edit_index: int = None
     ) -> dict:
         """
         Get edit history for an issue or PR.
+
+        Args:
+            number: Issue/PR number
+            is_pr: True for PR, False for issue
+            limit: Max edits to fetch (default 10)
+            edit_index: If provided, return FULL diff for this specific edit (0-indexed, 0=most recent)
 
         Returns:
         - Title changes (RenamedTitleEvent from timelineItems)
@@ -2223,12 +2230,23 @@ class GitHubGraphQL:
         # Format body edits
         body_edits = []
         edits_data = data.get("userContentEdits", {})
-        for edit in edits_data.get("nodes", []):
+        nodes = edits_data.get("nodes", [])
+        
+        for i, edit in enumerate(nodes):
             if edit:  # Can be null
+                diff = edit.get("diff", "(no diff available)")
+                # If requesting specific edit, show full diff for that one
+                if edit_index is not None and i == edit_index:
+                    diff_display = diff  # Full diff
+                else:
+                    diff_display = diff[:500] + "..." if len(diff) > 500 else diff
+                
                 body_edits.append({
+                    "index": i,
                     "date": edit["editedAt"][:16].replace("T", " "),
                     "by": edit["editor"]["login"] if edit.get("editor") else "ghost",
-                    "diff": edit.get("diff", "(no diff available)")[:500]  # Truncate long diffs
+                    "diff": diff_display,
+                    "truncated": edit_index != i and len(diff) > 500
                 })
 
         return {

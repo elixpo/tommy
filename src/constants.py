@@ -161,7 +161,7 @@ GITHUB_TOOLS = [
 
 Actions:
 - get: Get issue (issue_number, include_comments)
-- get_history: Get edit history - title changes and body edits (issue_number)
+- get_history: Get edit history - title changes and body edits (issue_number, edit_index=N for full diff of specific edit)
 - search: General issue search with filters (keywords, state, labels)
 - search_user: User's issues by discord username (discord_username, state)
 - find_similar: Find potential DUPLICATES before creating new issue (keywords, limit)
@@ -377,7 +377,7 @@ NOT for: creating/editing issues (use github_issue), PRs (use github_pr), code c
 
 Actions:
 - get: Get PR details (pr_number)
-- get_history: Get edit history - title changes and body edits (pr_number)
+- get_history: Get edit history - title changes and body edits (pr_number, edit_index=N for full diff of specific edit)
 - list: List PRs (state, limit, base)
 - get_files/get_diff/get_checks/get_commits: PR details (pr_number)
 - get_threads/get_review_comments: Review discussions (pr_number)

@@ -1544,6 +1544,8 @@ async def tool_github_pr(
     # Get file at ref
     file_path: str = None,
     ref: str = "main",  # Default to main branch (pollinations/pollinations uses main, not master)
+    # Edit history
+    edit_index: int = None,  # For get_history - get full diff for specific edit (0=most recent)
     # Injected context
     reporter: str = "Discord User",
     _context: dict = None,
@@ -1631,7 +1633,8 @@ async def tool_github_pr(
         history = await github_graphql.get_edit_history(
             number=pr_number,
             is_pr=True,
-            limit=10
+            limit=limit or 10,
+            edit_index=edit_index
         )
         return history
 

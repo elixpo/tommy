@@ -235,15 +235,15 @@ async def scrape_url(
 
             # Content based on format
             if output_format == "fit_markdown" and result.fit_markdown:
-                response["markdown"] = _truncate_content(result.fit_markdown, max_chars=20000)
+                response["markdown"] = _truncate_content(result.fit_markdown, max_chars=100000)
             elif output_format == "html" and result.html:
-                response["html"] = _truncate_content(result.html, max_chars=30000)
+                response["html"] = _truncate_content(result.html, max_chars=1000000)
             else:
-                response["markdown"] = _truncate_content(result.markdown or "", max_chars=20000)
+                response["markdown"] = _truncate_content(result.markdown or "", max_chars=100000)
 
             # Raw HTML if requested
             if include_raw_html and result.html:
-                response["raw_html"] = _truncate_content(result.html, max_chars=50000)
+                response["raw_html"] = _truncate_content(result.html, max_chars=200000)
 
             # Extracted content from strategy
             if result.extracted_content:
@@ -523,7 +523,7 @@ async def parse_file_content(
         "success": True,
         "file_type": file_type,
         "length": len(content),
-        "content": _truncate_content(content, max_chars=15000)
+        "content": _truncate_content(content, max_chars=100000)
     }
 
     # Try to detect file type from content
@@ -653,7 +653,7 @@ async def _llm_extract(content: str, instruction: str) -> Optional[str]:
     try:
         from .pollinations import pollinations_client
 
-        content_truncated = content[:12000]
+        content_truncated = content[:50000]
 
         result = await pollinations_client.generate_text(
             system_prompt=(
@@ -674,7 +674,7 @@ async def _llm_extract(content: str, instruction: str) -> Optional[str]:
         return None
 
 
-def _truncate_content(content: str, max_chars: int = 15000) -> str:
+def _truncate_content(content: str, max_chars: int = 100000) -> str:
     """Truncate content intelligently at paragraph boundaries."""
     if len(content) <= max_chars:
         return content

@@ -1024,6 +1024,7 @@ async def tool_github_issue(
     include_comments: bool = False,
     limit: int = 10,
     child_issue_number: int = None,  # For sub-issue actions
+    edit_index: int = None,  # For get_history - get full diff for specific edit (0=most recent)
     # Injected by bot.py for subscriptions (legacy params kept for compatibility)
     user_id: int = 0,
     channel_id: int = 0,
@@ -1098,7 +1099,8 @@ async def tool_github_issue(
         history = await github_graphql.get_edit_history(
             number=issue_number,
             is_pr=False,
-            limit=10
+            limit=limit or 10,
+            edit_index=edit_index
         )
         return history
 
