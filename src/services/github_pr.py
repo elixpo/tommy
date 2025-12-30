@@ -1624,6 +1624,17 @@ async def tool_github_pr(
     elif action == "list":
         return await github_pr_manager.list_prs(state=state, limit=limit, base=base)
 
+    elif action == "get_history":
+        if not pr_number:
+            return {"error": "pr_number required for 'get_history' action"}
+        from .github_graphql import github_graphql
+        history = await github_graphql.get_edit_history(
+            number=pr_number,
+            is_pr=True,
+            limit=10
+        )
+        return history
+
     elif action == "get_files":
         if not pr_number:
             return {"error": "pr_number required"}

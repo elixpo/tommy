@@ -1092,6 +1092,16 @@ async def tool_github_issue(
             result["comments"] = issue.pop("comments")
         return result
 
+    elif action == "get_history":
+        if not issue_number:
+            return {"error": "issue_number required for 'get_history' action"}
+        history = await github_graphql.get_edit_history(
+            number=issue_number,
+            is_pr=False,
+            limit=10
+        )
+        return history
+
     elif action == "search":
         if not keywords:
             return {"error": "keywords required for 'search' action"}

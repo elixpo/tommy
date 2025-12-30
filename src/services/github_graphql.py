@@ -2139,6 +2139,112 @@ class GitHubGraphQL:
 
         return overview
 
+    # =========================================================================
+    # EDIT HISTORY - Title changes and body edits for issues/PRs
+    # =========================================================================
+
+    async def get_edit_history(
+        self,
+        number: int,
+        is_pr: bool = False,
+        limit: int = 10
+    ) -> dict:
+        """
+        Get edit history for an issue or PR.
+
+        Returns:
+        - Title changes (RenamedTitleEvent from timelineItems)
+        - Body edits (userContentEdits on the issue/PR itself)
+
+        Works for both issues and PRs via GraphQL.
+        """
+        item_type = "pullRequest" if is_pr else "issue"
+
+        query = f"""
+        query GetEditHistory($owner: String!, $repo: String!, $number: Int!, $limit: Int!) {{
+            repository(owner: $owner, name: $repo) {{
+                {item_type}(number: $number) {{
+                    number
+                    title
+                    createdAt
+                    author {{ login }}
+
+                    # Body edit history
+                    userContentEdits(first: $limit) {{
+                        totalCount
+                        nodes {{
+                            editedAt
+                            editor {{ login }}
+                            diff
+                        }}
+                    }}
+
+                    # Title change history
+                    timelineItems(first: 50, itemTypes: [RENAMED_TITLE_EVENT]) {{
+                        nodes {{
+                            ... on RenamedTitleEvent {{
+                                createdAt
+                                actor {{ login }}
+                                previousTitle
+                                currentTitle
+                            }}
+                        }}
+                    }}
+                }}
+            }}
+        }}
+        """
+
+        result = await self._execute(query, {
+            "owner": self.owner,
+            "repo": self.repo,
+            "number": number,
+            "limit": limit
+        })
+
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        data = result.get("data", {}).get("repository", {}).get(item_type)
+        if not data:
+            return {"error": f"{'PR' if is_pr else 'Issue'} #{number} not found"}
+
+        # Format title changes
+        title_changes = []
+        for event in data.get("timelineItems", {}).get("nodes", []):
+            if event:  # Can be null
+                title_changes.append({
+                    "date": event["createdAt"][:16].replace("T", " "),
+                    "by": event["actor"]["login"] if event.get("actor") else "ghost",
+                    "from": event["previousTitle"],
+                    "to": event["currentTitle"]
+                })
+
+        # Format body edits
+        body_edits = []
+        edits_data = data.get("userContentEdits", {})
+        for edit in edits_data.get("nodes", []):
+            if edit:  # Can be null
+                body_edits.append({
+                    "date": edit["editedAt"][:16].replace("T", " "),
+                    "by": edit["editor"]["login"] if edit.get("editor") else "ghost",
+                    "diff": edit.get("diff", "(no diff available)")[:500]  # Truncate long diffs
+                })
+
+        return {
+            "number": data["number"],
+            "current_title": data["title"],
+            "type": "PR" if is_pr else "Issue",
+            "author": data["author"]["login"] if data.get("author") else "ghost",
+            "created": data["createdAt"][:10],
+            "title_changes": title_changes,
+            "title_change_count": len(title_changes),
+            "body_edits": body_edits,
+            "body_edit_count": edits_data.get("totalCount", 0),
+            "has_edits": len(title_changes) > 0 or len(body_edits) > 0
+        }
+
+
 
 # Singleton instance
 github_graphql = GitHubGraphQL()
