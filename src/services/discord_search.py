@@ -198,7 +198,7 @@ class DiscordSearchClient:
             for msg in msg_group:
                 formatted.append({
                     "id": msg.get("id"),
-                    "content": msg.get("content", "")[:500],  # Truncate long messages
+                    "content": msg.get("content", "")
                     "author": msg.get("author", {}).get("username", "Unknown"),
                     "author_id": msg.get("author", {}).get("id"),
                     "channel_id": msg.get("channel_id"),
@@ -542,7 +542,7 @@ class DiscordSearchClient:
             async for msg in channel.history(**kwargs):
                 messages.append({
                     "id": str(msg.id),
-                    "content": msg.content[:500] if msg.content else "",
+                    "content": msg.content or "",
                     "author": msg.author.name,
                     "author_id": str(msg.author.id),
                     "timestamp": msg.created_at.isoformat(),
@@ -610,7 +610,7 @@ class DiscordSearchClient:
             def format_msg(msg):
                 return {
                     "id": str(msg.id),
-                    "content": msg.content[:500] if msg.content else "",
+                    "content": msg.content or "",
                     "author": msg.author.name,
                     "author_id": str(msg.author.id),
                     "timestamp": msg.created_at.isoformat(),
@@ -666,7 +666,7 @@ class DiscordSearchClient:
             async for msg in thread.history(**kwargs):
                 messages.append({
                     "id": str(msg.id),
-                    "content": msg.content[:500] if msg.content else "",
+                    "content": msg.content or "",
                     "author": msg.author.name,
                     "author_id": str(msg.author.id),
                     "timestamp": msg.created_at.isoformat(),

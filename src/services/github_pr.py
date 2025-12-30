@@ -22,23 +22,57 @@ logger = logging.getLogger(__name__)
 
 # Files to skip during review
 SKIP_FILE_PATTERNS = [
-    re.compile(r'package-lock\.json$'),
-    re.compile(r'yarn\.lock$'),
-    re.compile(r'pnpm-lock\.yaml$'),
-    re.compile(r'\.min\.js$'),
-    re.compile(r'\.min\.css$'),
-    re.compile(r'\.map$'),
-    re.compile(r'\.(svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot|pyc)$'),
-    re.compile(r'__pycache__|\.egg-info'),
-    re.compile(r'node_modules/|vendor/|dist/|build/'),
-    re.compile(r'migrations/'),
+    re.compile(r"package-lock\.json$"),
+    re.compile(r"yarn\.lock$"),
+    re.compile(r"pnpm-lock\.yaml$"),
+    re.compile(r"\.min\.js$"),
+    re.compile(r"\.min\.css$"),
+    re.compile(r"\.map$"),
+    re.compile(r"\.(svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot|pyc)$"),
+    re.compile(r"__pycache__|\.egg-info"),
+    re.compile(r"node_modules/|vendor/|dist/|build/"),
+    re.compile(r"migrations/"),
 ]
 
 # High priority files (security-sensitive)
-HIGH_PRIORITY_PATTERNS = ['auth', 'login', 'password', 'secret', 'token', 'api', 'security', 'crypto', 'session', 'credential', 'key', 'private']
+HIGH_PRIORITY_PATTERNS = [
+    "auth",
+    "login",
+    "password",
+    "secret",
+    "token",
+    "api",
+    "security",
+    "crypto",
+    "session",
+    "credential",
+    "key",
+    "private",
+]
 
 # Code file extensions
-CODE_EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx', '.go', '.rs', '.java', '.cpp', '.c', '.h', '.hpp', '.rb', '.php', '.swift', '.kt', '.scala', '.cs', '.vue', '.svelte'}
+CODE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".cpp",
+    ".c",
+    ".h",
+    ".hpp",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".scala",
+    ".cs",
+    ".vue",
+    ".svelte",
+}
 
 # Token estimation
 CHARS_PER_TOKEN = 4
@@ -47,6 +81,7 @@ CHARS_PER_TOKEN = 4
 @dataclass
 class FilePatch:
     """Represents a single file's patch/diff"""
+
     filename: str
     patch: str
     additions: int
@@ -99,7 +134,7 @@ class GitHubPRManager:
         return {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github.v3+json",
-            "X-GitHub-Api-Version": "2022-11-28"
+            "X-GitHub-Api-Version": "2022-11-28",
         }
 
     def _has_auth(self) -> bool:
@@ -171,7 +206,7 @@ class GitHubPRManager:
         try:
             result = await github_graphql._execute(
                 query,
-                {"owner": self.owner, "repo": self.repo_name, "number": pr_number}
+                {"owner": self.owner, "repo": self.repo_name, "number": pr_number},
             )
 
             if result.get("error"):
@@ -188,7 +223,7 @@ class GitHubPRManager:
             return {
                 "number": pr["number"],
                 "title": pr["title"],
-                "body": (pr.get("body") or "")[:1000],
+                "body": pr.get("body") or "",
                 "state": pr["state"].lower(),
                 "draft": pr["isDraft"],
                 "mergeable": pr["mergeable"],
@@ -202,10 +237,15 @@ class GitHubPRManager:
                 "deletions": pr["deletions"],
                 "changed_files": pr["changedFiles"],
                 "labels": [l["name"] for l in pr.get("labels", {}).get("nodes", [])],
-                "assignees": [a["login"] for a in pr.get("assignees", {}).get("nodes", [])],
+                "assignees": [
+                    a["login"] for a in pr.get("assignees", {}).get("nodes", [])
+                ],
                 "requested_reviewers": [
-                    r["requestedReviewer"]["login"] if "login" in r.get("requestedReviewer", {})
-                    else r["requestedReviewer"].get("name", "unknown")
+                    (
+                        r["requestedReviewer"]["login"]
+                        if "login" in r.get("requestedReviewer", {})
+                        else r["requestedReviewer"].get("name", "unknown")
+                    )
                     for r in pr.get("reviewRequests", {}).get("nodes", [])
                     if r.get("requestedReviewer")
                 ],
@@ -213,28 +253,30 @@ class GitHubPRManager:
                     {
                         "user": r["author"]["login"] if r.get("author") else "unknown",
                         "state": r["state"],
-                        "body": (r.get("body") or "")[:200]
+                        "body": r.get("body") or "",
                     }
                     for r in pr.get("reviews", {}).get("nodes", [])
                 ],
                 "checks_state": rollup.get("state", "UNKNOWN"),
-                "node_id": pr["id"]
+                "node_id": pr["id"],
             }
         except Exception as e:
             logger.error(f"Error getting PR: {e}")
             return {"error": str(e)}
 
     async def list_prs(
-        self,
-        state: str = "open",
-        limit: int = 10,
-        base: Optional[str] = None
+        self, state: str = "open", limit: int = 10, base: Optional[str] = None
     ) -> dict:
         """List pull requests using GraphQL."""
         if not self._has_auth():
             return {"error": "GitHub token not configured"}
 
-        states_map = {"open": "OPEN", "closed": "CLOSED", "merged": "MERGED", "all": None}
+        states_map = {
+            "open": "OPEN",
+            "closed": "CLOSED",
+            "merged": "MERGED",
+            "all": None,
+        }
         gql_state = states_map.get(state.lower())
 
         query = """
@@ -269,25 +311,36 @@ class GitHubPRManager:
             if result.get("error"):
                 return {"error": result["error"]}
 
-            prs_data = result.get("data", {}).get("repository", {}).get("pullRequests", {}).get("nodes", [])
+            prs_data = (
+                result.get("data", {})
+                .get("repository", {})
+                .get("pullRequests", {})
+                .get("nodes", [])
+            )
 
             prs = []
             for pr in prs_data:
                 if base and pr["baseRefName"] != base:
                     continue
-                prs.append({
-                    "number": pr["number"],
-                    "title": pr["title"],
-                    "state": pr["state"].lower(),
-                    "draft": pr["isDraft"],
-                    "url": pr["url"],
-                    "author": pr["author"]["login"] if pr.get("author") else "unknown",
-                    "head": pr["headRefName"],
-                    "base": pr["baseRefName"],
-                    "created_at": pr["createdAt"][:10],
-                    "updated_at": pr["updatedAt"][:10],
-                    "labels": [l["name"] for l in pr.get("labels", {}).get("nodes", [])]
-                })
+                prs.append(
+                    {
+                        "number": pr["number"],
+                        "title": pr["title"],
+                        "state": pr["state"].lower(),
+                        "draft": pr["isDraft"],
+                        "url": pr["url"],
+                        "author": (
+                            pr["author"]["login"] if pr.get("author") else "unknown"
+                        ),
+                        "head": pr["headRefName"],
+                        "base": pr["baseRefName"],
+                        "created_at": pr["createdAt"][:10],
+                        "updated_at": pr["updatedAt"][:10],
+                        "labels": [
+                            l["name"] for l in pr.get("labels", {}).get("nodes", [])
+                        ],
+                    }
+                )
 
             return {"prs": prs, "count": len(prs), "state": state}
         except Exception as e:
@@ -306,20 +359,23 @@ class GitHubPRManager:
             async with session.get(url, headers=await self._get_headers()) as response:
                 if response.status == 200:
                     data = await response.json()
-                    files = [{
-                        "filename": f["filename"],
-                        "status": f["status"],
-                        "additions": f["additions"],
-                        "deletions": f["deletions"],
-                        "changes": f["changes"],
-                        "patch": f.get("patch", "")[:500] if f.get("patch") else None
-                    } for f in data]
+                    files = [
+                        {
+                            "filename": f["filename"],
+                            "status": f["status"],
+                            "additions": f["additions"],
+                            "deletions": f["deletions"],
+                            "changes": f["changes"],
+                            "patch": f.get("patch") or None,
+                        }
+                        for f in data
+                    ]
                     return {
                         "pr_number": pr_number,
                         "files": files,
                         "count": len(files),
                         "total_additions": sum(f["additions"] for f in files),
-                        "total_deletions": sum(f["deletions"] for f in files)
+                        "total_deletions": sum(f["deletions"] for f in files),
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
@@ -343,8 +399,6 @@ class GitHubPRManager:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     diff = await response.text()
-                    if len(diff) > 15000:
-                        diff = diff[:15000] + "\n\n... (truncated)"
                     return {"pr_number": pr_number, "diff": diff}
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
@@ -398,7 +452,7 @@ class GitHubPRManager:
         try:
             result = await github_graphql._execute(
                 query,
-                {"owner": self.owner, "repo": self.repo_name, "number": pr_number}
+                {"owner": self.owner, "repo": self.repo_name, "number": pr_number},
             )
 
             if result.get("error"):
@@ -410,7 +464,11 @@ class GitHubPRManager:
 
             commits = pr_data.get("commits", {}).get("nodes", [])
             if not commits:
-                return {"pr_number": pr_number, "checks": [], "overall_state": "UNKNOWN"}
+                return {
+                    "pr_number": pr_number,
+                    "checks": [],
+                    "overall_state": "UNKNOWN",
+                }
 
             commit = commits[0].get("commit", {})
             rollup = commit.get("statusCheckRollup")
@@ -420,31 +478,35 @@ class GitHubPRManager:
                     "pr_number": pr_number,
                     "sha": commit.get("oid", "")[:7],
                     "checks": [],
-                    "overall_state": "NO_CHECKS"
+                    "overall_state": "NO_CHECKS",
                 }
 
             checks = []
             for ctx in rollup.get("contexts", {}).get("nodes", []):
                 if ctx.get("__typename") == "CheckRun":
-                    checks.append({
-                        "name": ctx.get("name"),
-                        "status": ctx.get("status"),
-                        "conclusion": ctx.get("conclusion"),
-                        "url": ctx.get("detailsUrl")
-                    })
+                    checks.append(
+                        {
+                            "name": ctx.get("name"),
+                            "status": ctx.get("status"),
+                            "conclusion": ctx.get("conclusion"),
+                            "url": ctx.get("detailsUrl"),
+                        }
+                    )
                 elif ctx.get("__typename") == "StatusContext":
-                    checks.append({
-                        "name": ctx.get("context"),
-                        "state": ctx.get("state"),
-                        "url": ctx.get("targetUrl")
-                    })
+                    checks.append(
+                        {
+                            "name": ctx.get("context"),
+                            "state": ctx.get("state"),
+                            "url": ctx.get("targetUrl"),
+                        }
+                    )
 
             return {
                 "pr_number": pr_number,
                 "sha": commit.get("oid", "")[:7],
                 "overall_state": rollup.get("state", "UNKNOWN"),
                 "checks": checks,
-                "count": len(checks)
+                "count": len(checks),
             }
         except Exception as e:
             logger.error(f"Error getting PR checks: {e}")
@@ -458,7 +520,7 @@ class GitHubPRManager:
         self,
         pr_number: int,
         reviewers: Optional[list[str]] = None,
-        team_reviewers: Optional[list[str]] = None
+        team_reviewers: Optional[list[str]] = None,
     ) -> dict:
         """Request reviewers for a PR using REST API."""
         if not self._has_auth():
@@ -476,7 +538,9 @@ class GitHubPRManager:
 
         try:
             session = await self.get_session()
-            async with session.post(url, json=payload, headers=await self._get_headers()) as response:
+            async with session.post(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
                 if response.status in (200, 201):
                     logger.info(f"Requested reviewers for PR #{pr_number}")
                     return {
@@ -484,13 +548,15 @@ class GitHubPRManager:
                         "pr_number": pr_number,
                         "reviewers_requested": reviewers or [],
                         "teams_requested": team_reviewers or [],
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
                 elif response.status == 422:
                     error_data = await response.json()
-                    return {"error": f"Cannot request reviewer: {error_data.get('message', 'validation failed')}"}
+                    return {
+                        "error": f"Cannot request reviewer: {error_data.get('message', 'validation failed')}"
+                    }
                 else:
                     return {"error": f"GitHub API error: {response.status}"}
         except Exception as e:
@@ -498,10 +564,7 @@ class GitHubPRManager:
             return {"error": str(e)}
 
     async def create_review(
-        self,
-        pr_number: int,
-        event: str,
-        body: Optional[str] = None
+        self, pr_number: int, event: str, body: Optional[str] = None
     ) -> dict:
         """Create a review on a PR (approve, request changes, or comment)."""
         if not self._has_auth():
@@ -522,7 +585,9 @@ class GitHubPRManager:
 
         try:
             session = await self.get_session()
-            async with session.post(url, json=payload, headers=await self._get_headers()) as response:
+            async with session.post(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
                     logger.info(f"Created {event} review on PR #{pr_number}")
@@ -531,13 +596,15 @@ class GitHubPRManager:
                         "pr_number": pr_number,
                         "review_id": data.get("id"),
                         "event": event,
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
                 elif response.status == 422:
                     error_data = await response.json()
-                    return {"error": f"Review failed: {error_data.get('message', 'validation failed')}"}
+                    return {
+                        "error": f"Review failed: {error_data.get('message', 'validation failed')}"
+                    }
                 else:
                     return {"error": f"GitHub API error: {response.status}"}
         except Exception as e:
@@ -549,7 +616,7 @@ class GitHubPRManager:
         pr_number: int,
         commit_title: Optional[str] = None,
         commit_message: Optional[str] = None,
-        merge_method: str = "merge"
+        merge_method: str = "merge",
     ) -> dict:
         """Merge a PR."""
         if not self._has_auth():
@@ -568,7 +635,9 @@ class GitHubPRManager:
 
         try:
             session = await self.get_session()
-            async with session.put(url, json=payload, headers=await self._get_headers()) as response:
+            async with session.put(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
                     logger.info(f"Merged PR #{pr_number}")
@@ -578,15 +647,19 @@ class GitHubPRManager:
                         "merged": True,
                         "sha": data.get("sha"),
                         "message": data.get("message"),
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
                 elif response.status == 405:
-                    return {"error": "PR cannot be merged (not mergeable or already merged)"}
+                    return {
+                        "error": "PR cannot be merged (not mergeable or already merged)"
+                    }
                 elif response.status == 409:
                     error_data = await response.json()
-                    return {"error": f"Merge conflict: {error_data.get('message', 'conflict')}"}
+                    return {
+                        "error": f"Merge conflict: {error_data.get('message', 'conflict')}"
+                    }
                 else:
                     return {"error": f"GitHub API error: {response.status}"}
         except Exception as e:
@@ -599,7 +672,7 @@ class GitHubPRManager:
         title: Optional[str] = None,
         body: Optional[str] = None,
         state: Optional[str] = None,
-        base: Optional[str] = None
+        base: Optional[str] = None,
     ) -> dict:
         """Update a PR's title, body, state, or base branch."""
         if not self._has_auth():
@@ -621,13 +694,15 @@ class GitHubPRManager:
 
         try:
             session = await self.get_session()
-            async with session.patch(url, json=payload, headers=await self._get_headers()) as response:
+            async with session.patch(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
                 if response.status == 200:
                     return {
                         "success": True,
                         "pr_number": pr_number,
                         "updated": list(payload.keys()),
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
@@ -638,34 +713,39 @@ class GitHubPRManager:
             return {"error": str(e)}
 
     async def create_pr(
-        self,
-        title: str,
-        body: str,
-        head: str,
-        base: str = "main",
-        draft: bool = False
+        self, title: str, body: str, head: str, base: str = "main", draft: bool = False
     ) -> dict:
         """Create a new pull request."""
         if not self._has_auth():
             return {"error": "GitHub token not configured"}
 
         url = f"https://api.github.com/repos/{self.repo}/pulls"
-        payload = {"title": title, "body": body, "head": head, "base": base, "draft": draft}
+        payload = {
+            "title": title,
+            "body": body,
+            "head": head,
+            "base": base,
+            "draft": draft,
+        }
 
         try:
             session = await self.get_session()
-            async with session.post(url, json=payload, headers=await self._get_headers()) as response:
+            async with session.post(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
                 if response.status == 201:
                     data = await response.json()
                     return {
                         "success": True,
                         "pr_number": data["number"],
                         "pr_url": data["html_url"],
-                        "state": "draft" if draft else "open"
+                        "state": "draft" if draft else "open",
                     }
                 elif response.status == 422:
                     error_data = await response.json()
-                    return {"error": f"Cannot create PR: {error_data.get('message', 'validation failed')}"}
+                    return {
+                        "error": f"Cannot create PR: {error_data.get('message', 'validation failed')}"
+                    }
                 else:
                     return {"error": f"GitHub API error: {response.status}"}
         except Exception as e:
@@ -679,7 +759,11 @@ class GitHubPRManager:
             return pr
 
         if pr.get("draft"):
-            return {"success": True, "pr_number": pr_number, "message": "PR is already a draft"}
+            return {
+                "success": True,
+                "pr_number": pr_number,
+                "message": "PR is already a draft",
+            }
 
         mutation = """
         mutation($pullRequestId: ID!) {
@@ -690,7 +774,9 @@ class GitHubPRManager:
         """
 
         try:
-            result = await github_graphql._execute(mutation, {"pullRequestId": pr["node_id"]})
+            result = await github_graphql._execute(
+                mutation, {"pullRequestId": pr["node_id"]}
+            )
             if result.get("error"):
                 return {"error": result["error"]}
 
@@ -698,7 +784,7 @@ class GitHubPRManager:
                 "success": True,
                 "pr_number": pr_number,
                 "is_draft": True,
-                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
             }
         except Exception as e:
             logger.error(f"Error converting to draft: {e}")
@@ -711,7 +797,11 @@ class GitHubPRManager:
             return pr
 
         if not pr.get("draft"):
-            return {"success": True, "pr_number": pr_number, "message": "PR is already ready for review"}
+            return {
+                "success": True,
+                "pr_number": pr_number,
+                "message": "PR is already ready for review",
+            }
 
         mutation = """
         mutation($pullRequestId: ID!) {
@@ -722,7 +812,9 @@ class GitHubPRManager:
         """
 
         try:
-            result = await github_graphql._execute(mutation, {"pullRequestId": pr["node_id"]})
+            result = await github_graphql._execute(
+                mutation, {"pullRequestId": pr["node_id"]}
+            )
             if result.get("error"):
                 return {"error": result["error"]}
 
@@ -730,7 +822,7 @@ class GitHubPRManager:
                 "success": True,
                 "pr_number": pr_number,
                 "is_draft": False,
-                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
             }
         except Exception as e:
             logger.error(f"Error marking ready: {e}")
@@ -741,7 +833,9 @@ class GitHubPRManager:
         if not self._has_auth():
             return {"error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{self.repo}/pulls/{pr_number}/update-branch"
+        url = (
+            f"https://api.github.com/repos/{self.repo}/pulls/{pr_number}/update-branch"
+        )
 
         try:
             session = await self.get_session()
@@ -751,19 +845,23 @@ class GitHubPRManager:
                         "success": True,
                         "pr_number": pr_number,
                         "message": "Branch updated",
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
                 elif response.status == 422:
-                    return {"error": "Branch cannot be updated (no updates available or conflict)"}
+                    return {
+                        "error": "Branch cannot be updated (no updates available or conflict)"
+                    }
                 else:
                     return {"error": f"GitHub API error: {response.status}"}
         except Exception as e:
             logger.error(f"Error updating branch: {e}")
             return {"error": str(e)}
 
-    async def add_comment(self, pr_number: int, body: str, author: str = "Discord User") -> dict:
+    async def add_comment(
+        self, pr_number: int, body: str, author: str = "Discord User"
+    ) -> dict:
         """Add a comment to a PR."""
         if not self._has_auth():
             return {"error": "GitHub token not configured"}
@@ -773,12 +871,14 @@ class GitHubPRManager:
 
         try:
             session = await self.get_session()
-            async with session.post(url, json={"body": comment_body}, headers=await self._get_headers()) as response:
+            async with session.post(
+                url, json={"body": comment_body}, headers=await self._get_headers()
+            ) as response:
                 if response.status == 201:
                     return {
                         "success": True,
                         "pr_number": pr_number,
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
@@ -800,7 +900,7 @@ class GitHubPRManager:
         line: int,
         side: str = "RIGHT",
         commit_id: Optional[str] = None,
-        author: str = "Discord User"
+        author: str = "Discord User",
     ) -> dict:
         """
         Add an inline review comment on a specific line of code.
@@ -834,12 +934,14 @@ class GitHubPRManager:
             "path": path,
             "line": line,
             "side": side,
-            "commit_id": commit_id
+            "commit_id": commit_id,
         }
 
         try:
             session = await self.get_session()
-            async with session.post(url, json=payload, headers=await self._get_headers()) as response:
+            async with session.post(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
                 if response.status == 201:
                     data = await response.json()
                     return {
@@ -848,13 +950,15 @@ class GitHubPRManager:
                         "comment_id": data.get("id"),
                         "path": path,
                         "line": line,
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
                 elif response.status == 422:
                     error_data = await response.json()
-                    return {"error": f"Invalid comment position: {error_data.get('message', 'validation failed')}"}
+                    return {
+                        "error": f"Invalid comment position: {error_data.get('message', 'validation failed')}"
+                    }
                 else:
                     return {"error": f"GitHub API error: {response.status}"}
         except Exception as e:
@@ -870,7 +974,7 @@ class GitHubPRManager:
         message: str = "",
         side: str = "RIGHT",
         commit_id: Optional[str] = None,
-        author: str = "Discord User"
+        author: str = "Discord User",
     ) -> dict:
         """
         Add a code suggestion that can be applied with one click.
@@ -897,7 +1001,7 @@ class GitHubPRManager:
             line=line,
             side=side,
             commit_id=commit_id,
-            author=author
+            author=author,
         )
 
     # ============================================================
@@ -939,23 +1043,19 @@ class GitHubPRManager:
                         except Exception:
                             content = "[Binary file or decoding error]"
 
-                    # Truncate if too long
-                    truncated = False
-                    if len(content) > 50000:
-                        content = content[:50000] + "\n\n... [truncated]"
-                        truncated = True
-
                     return {
                         "path": path,
                         "ref": ref,
                         "content": content,
                         "size": data.get("size", 0),
                         "sha": data.get("sha", "")[:7],
-                        "truncated": truncated,
-                        "url": data.get("html_url", "")
+                        "url": data.get("html_url", ""),
                     }
                 elif response.status == 404:
-                    return {"error": f"File '{path}' not found at ref '{ref}'", "not_found": True}
+                    return {
+                        "error": f"File '{path}' not found at ref '{ref}'",
+                        "not_found": True,
+                    }
                 else:
                     return {"error": f"GitHub API error: {response.status}"}
         except Exception as e:
@@ -974,18 +1074,21 @@ class GitHubPRManager:
             async with session.get(url, headers=await self._get_headers()) as response:
                 if response.status == 200:
                     data = await response.json()
-                    commits = [{
-                        "sha": c["sha"][:7],
-                        "full_sha": c["sha"],
-                        "message": c["commit"]["message"].split("\n")[0][:100],
-                        "author": c["commit"]["author"]["name"],
-                        "date": c["commit"]["author"]["date"][:10],
-                        "url": c["html_url"]
-                    } for c in data]
+                    commits = [
+                        {
+                            "sha": c["sha"][:7],
+                            "full_sha": c["sha"],
+                            "message": c["commit"]["message"].split("\n")[0][:100],
+                            "author": c["commit"]["author"]["name"],
+                            "date": c["commit"]["author"]["date"][:10],
+                            "url": c["html_url"],
+                        }
+                        for c in data
+                    ]
                     return {
                         "pr_number": pr_number,
                         "commits": commits,
-                        "count": len(commits)
+                        "count": len(commits),
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
@@ -1078,7 +1181,7 @@ class GitHubPRManager:
         try:
             result = await github_graphql._execute(
                 query,
-                {"owner": self.owner, "repo": self.repo_name, "number": pr_number}
+                {"owner": self.owner, "repo": self.repo_name, "number": pr_number},
             )
 
             if result.get("error"):
@@ -1091,23 +1194,29 @@ class GitHubPRManager:
             threads = []
             for t in pr_data.get("reviewThreads", {}).get("nodes", []):
                 comments = t.get("comments", {}).get("nodes", [])
-                threads.append({
-                    "id": t["id"],
-                    "resolved": t["isResolved"],
-                    "outdated": t["isOutdated"],
-                    "path": t.get("path"),
-                    "line": t.get("line"),
-                    "comments_count": len(comments),
-                    "first_comment": comments[0]["body"][:200] if comments else None,
-                    "author": comments[0]["author"]["login"] if comments and comments[0].get("author") else "unknown"
-                })
+                threads.append(
+                    {
+                        "id": t["id"],
+                        "resolved": t["isResolved"],
+                        "outdated": t["isOutdated"],
+                        "path": t.get("path"),
+                        "line": t.get("line"),
+                        "comments_count": len(comments),
+                        "first_comment": (comments[0]["body"] if comments else None),
+                        "author": (
+                            comments[0]["author"]["login"]
+                            if comments and comments[0].get("author")
+                            else "unknown"
+                        ),
+                    }
+                )
 
             return {
                 "pr_number": pr_number,
                 "threads": threads,
                 "total": len(threads),
                 "resolved": sum(1 for t in threads if t["resolved"]),
-                "unresolved": sum(1 for t in threads if not t["resolved"])
+                "unresolved": sum(1 for t in threads if not t["resolved"]),
             }
         except Exception as e:
             logger.error(f"Error getting review threads: {e}")
@@ -1118,20 +1227,14 @@ class GitHubPRManager:
     # ============================================================
 
     async def enable_auto_merge(
-        self,
-        pr_number: int,
-        merge_method: str = "SQUASH"
+        self, pr_number: int, merge_method: str = "SQUASH"
     ) -> dict:
         """Enable auto-merge for a PR when checks pass."""
         pr = await self.get_pr(pr_number)
         if pr.get("error"):
             return pr
 
-        method_map = {
-            "merge": "MERGE",
-            "squash": "SQUASH",
-            "rebase": "REBASE"
-        }
+        method_map = {"merge": "MERGE", "squash": "SQUASH", "rebase": "REBASE"}
         gql_method = method_map.get(merge_method.lower(), merge_method.upper())
 
         mutation = """
@@ -1144,8 +1247,7 @@ class GitHubPRManager:
 
         try:
             result = await github_graphql._execute(
-                mutation,
-                {"pullRequestId": pr["node_id"], "mergeMethod": gql_method}
+                mutation, {"pullRequestId": pr["node_id"], "mergeMethod": gql_method}
             )
             if result.get("error"):
                 return {"error": result["error"]}
@@ -1155,7 +1257,7 @@ class GitHubPRManager:
                 "pr_number": pr_number,
                 "auto_merge": True,
                 "merge_method": gql_method,
-                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
             }
         except Exception as e:
             logger.error(f"Error enabling auto-merge: {e}")
@@ -1177,8 +1279,7 @@ class GitHubPRManager:
 
         try:
             result = await github_graphql._execute(
-                mutation,
-                {"pullRequestId": pr["node_id"]}
+                mutation, {"pullRequestId": pr["node_id"]}
             )
             if result.get("error"):
                 return {"error": result["error"]}
@@ -1187,7 +1288,7 @@ class GitHubPRManager:
                 "success": True,
                 "pr_number": pr_number,
                 "auto_merge": False,
-                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
             }
         except Exception as e:
             logger.error(f"Error disabling auto-merge: {e}")
@@ -1209,20 +1310,25 @@ class GitHubPRManager:
             async with session.get(url, headers=await self._get_headers()) as response:
                 if response.status == 200:
                     data = await response.json()
-                    comments = [{
-                        "id": c["id"],
-                        "path": c["path"],
-                        "line": c.get("line") or c.get("original_line"),
-                        "body": c["body"][:300],
-                        "author": c["user"]["login"] if c.get("user") else "unknown",
-                        "created_at": c["created_at"][:10],
-                        "in_reply_to_id": c.get("in_reply_to_id"),
-                        "url": c["html_url"]
-                    } for c in data]
+                    comments = [
+                        {
+                            "id": c["id"],
+                            "path": c["path"],
+                            "line": c.get("line") or c.get("original_line"),
+                            "body": c["body"],
+                            "author": (
+                                c["user"]["login"] if c.get("user") else "unknown"
+                            ),
+                            "created_at": c["created_at"][:10],
+                            "in_reply_to_id": c.get("in_reply_to_id"),
+                            "url": c["html_url"],
+                        }
+                        for c in data
+                    ]
                     return {
                         "pr_number": pr_number,
                         "comments": comments,
-                        "count": len(comments)
+                        "count": len(comments),
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
@@ -1236,7 +1342,7 @@ class GitHubPRManager:
         self,
         pr_number: int,
         reviewers: Optional[list[str]] = None,
-        team_reviewers: Optional[list[str]] = None
+        team_reviewers: Optional[list[str]] = None,
     ) -> dict:
         """Remove requested reviewers from a PR."""
         if not self._has_auth():
@@ -1254,14 +1360,16 @@ class GitHubPRManager:
 
         try:
             session = await self.get_session()
-            async with session.delete(url, json=payload, headers=await self._get_headers()) as response:
+            async with session.delete(
+                url, json=payload, headers=await self._get_headers()
+            ) as response:
                 if response.status == 200:
                     return {
                         "success": True,
                         "pr_number": pr_number,
                         "reviewers_removed": reviewers or [],
                         "teams_removed": team_reviewers or [],
-                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}"
+                        "pr_url": f"https://github.com/{self.repo}/pull/{pr_number}",
                     }
                 elif response.status == 404:
                     return {"error": f"PR #{pr_number} not found", "not_found": True}
@@ -1276,10 +1384,7 @@ class GitHubPRManager:
     # ============================================================
 
     async def review_pr(
-        self,
-        pr_number: int,
-        post_to_github: bool = False,
-        author: str = "Discord User"
+        self, pr_number: int, post_to_github: bool = False, author: str = "Discord User"
     ) -> dict:
         """
         Generate an AI-powered code review for a PR.
@@ -1323,7 +1428,7 @@ class GitHubPRManager:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 model="gemini-large",  # 1M context for large PR diffs
-                temperature=0.3
+                temperature=0.3,
             )
 
             if not review_text:
@@ -1338,7 +1443,7 @@ class GitHubPRManager:
                 "pr_title": pr["title"],
                 "pr_url": pr["url"],
                 "review": review_text,
-                "posted_to_github": False
+                "posted_to_github": False,
             }
 
             # Optionally post to GitHub
@@ -1346,7 +1451,7 @@ class GitHubPRManager:
                 comment_result = await self.add_comment(
                     pr_number,
                     f"## AI Code Review\n\n{review_text}\n\n---\n*Requested by `{author}` via Discord*",
-                    author
+                    author,
                 )
                 if comment_result.get("success"):
                     result["posted_to_github"] = True
@@ -1363,32 +1468,44 @@ class GitHubPRManager:
         current_lines = []
         current_filename = None
 
-        for line in diff_text.split('\n'):
-            if line.startswith('diff --git'):
+        for line in diff_text.split("\n"):
+            if line.startswith("diff --git"):
                 # Process previous file
-                if current_filename and current_lines and not self._should_skip_file(current_filename):
-                    formatted = self._format_file_hunks(current_filename, '\n'.join(current_lines))
+                if (
+                    current_filename
+                    and current_lines
+                    and not self._should_skip_file(current_filename)
+                ):
+                    formatted = self._format_file_hunks(
+                        current_filename, "\n".join(current_lines)
+                    )
                     if formatted:
                         output_parts.append(formatted)
 
                 # Start new file
                 current_lines = [line]
-                match = re.match(r'diff --git a/(.*?) b/(.*)', line)
-                current_filename = match.group(2) if match else 'unknown'
+                match = re.match(r"diff --git a/(.*?) b/(.*)", line)
+                current_filename = match.group(2) if match else "unknown"
             else:
                 current_lines.append(line)
 
         # Don't forget last file
-        if current_filename and current_lines and not self._should_skip_file(current_filename):
-            formatted = self._format_file_hunks(current_filename, '\n'.join(current_lines))
+        if (
+            current_filename
+            and current_lines
+            and not self._should_skip_file(current_filename)
+        ):
+            formatted = self._format_file_hunks(
+                current_filename, "\n".join(current_lines)
+            )
             if formatted:
                 output_parts.append(formatted)
 
-        return '\n'.join(output_parts)
+        return "\n".join(output_parts)
 
     def _format_file_hunks(self, filename: str, patch: str) -> str:
         """Convert a file's patch to PR-Agent style format with line numbers."""
-        lines = patch.split('\n')
+        lines = patch.split("\n")
         output = f"\n\n## File: '{filename}'\n"
 
         new_hunk_lines = []
@@ -1397,27 +1514,29 @@ class GitHubPRManager:
         current_header = ""
 
         for line in lines:
-            if line.startswith(('diff --git', 'index ', '---', '+++')):
+            if line.startswith(("diff --git", "index ", "---", "+++")):
                 continue
 
-            if line.startswith('@@'):
+            if line.startswith("@@"):
                 # Output previous hunk
                 if new_hunk_lines or old_hunk_lines:
-                    output += self._format_hunk(current_header, new_hunk_lines, old_hunk_lines)
+                    output += self._format_hunk(
+                        current_header, new_hunk_lines, old_hunk_lines
+                    )
                     new_hunk_lines = []
                     old_hunk_lines = []
 
                 # Parse new line number
-                match = re.search(r'\+(\d+)', line)
+                match = re.search(r"\+(\d+)", line)
                 line_num = int(match.group(1)) - 1 if match else 0
                 current_header = line
 
-            elif line.startswith('+') and not line.startswith('+++'):
+            elif line.startswith("+") and not line.startswith("+++"):
                 line_num += 1
                 new_hunk_lines.append(f"{line_num:4d} {line}")
-            elif line.startswith('-') and not line.startswith('---'):
+            elif line.startswith("-") and not line.startswith("---"):
                 old_hunk_lines.append(line)
-            elif line.startswith(' ') or line == '':
+            elif line.startswith(" ") or line == "":
                 line_num += 1
                 new_hunk_lines.append(f"{line_num:4d} {line}")
 
@@ -1429,18 +1548,18 @@ class GitHubPRManager:
 
     def _format_hunk(self, header: str, new_lines: list, old_lines: list) -> str:
         """Format a single hunk with __new hunk__ / __old hunk__ sections."""
-        has_additions = any('+' in l for l in new_lines)
+        has_additions = any("+" in l for l in new_lines)
         has_deletions = bool(old_lines)
 
         if not has_additions and not has_deletions:
             return ""
 
         output = f"\n{header}\n__new hunk__\n"
-        output += '\n'.join(new_lines) + '\n'
+        output += "\n".join(new_lines) + "\n"
 
         if has_deletions:
             output += "__old hunk__\n"
-            output += '\n'.join(old_lines) + '\n'
+            output += "\n".join(old_lines) + "\n"
 
         return output
 
@@ -1478,7 +1597,7 @@ Keep your review concise (200-500 words). Be direct and actionable."""
 **Changes:** +{pr['additions']} -{pr['deletions']} across {pr['changed_files']} files
 
 **Description:**
-{pr.get('body', 'No description provided')[:500]}
+{pr.get('body', 'No description provided')}
 
 **Code Diff:**
 {diff}
@@ -1490,13 +1609,13 @@ Review this PR for bugs, security issues, and performance problems. Be concise."
         review = response.strip()
 
         # Remove markdown code blocks if wrapped
-        if review.startswith('```'):
-            lines = review.split('\n')
-            if lines[0].startswith('```'):
+        if review.startswith("```"):
+            lines = review.split("\n")
+            if lines[0].startswith("```"):
                 lines = lines[1:]
-            if lines and lines[-1].strip() == '```':
+            if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
-            review = '\n'.join(lines)
+            review = "\n".join(lines)
 
         return review.strip()
 
@@ -1508,6 +1627,7 @@ github_pr_manager = GitHubPRManager()
 # =============================================================================
 # CONSOLIDATED PR TOOL HANDLER
 # =============================================================================
+
 
 async def tool_github_pr(
     action: str,
@@ -1549,7 +1669,7 @@ async def tool_github_pr(
     # Injected context
     reporter: str = "Discord User",
     _context: dict = None,
-    **kwargs  # Catch any extra args
+    **kwargs,  # Catch any extra args
 ) -> dict:
     """
     Consolidated PR tool - handles ALL pull request operations.
@@ -1604,18 +1724,38 @@ async def tool_github_pr(
 
     # ADMIN ACTIONS - require admin permission
     ADMIN_ACTIONS = {
-        "request_review", "remove_reviewer", "approve", "request_changes", "merge",
-        "update", "create", "convert_to_draft", "ready_for_review", "update_branch",
-        "inline_comment", "suggest", "resolve_thread", "unresolve_thread",
-        "enable_auto_merge", "disable_auto_merge", "close", "reopen"
+        "request_review",
+        "remove_reviewer",
+        "approve",
+        "request_changes",
+        "merge",
+        "update",
+        "create",
+        "convert_to_draft",
+        "ready_for_review",
+        "update_branch",
+        "inline_comment",
+        "suggest",
+        "resolve_thread",
+        "unresolve_thread",
+        "enable_auto_merge",
+        "disable_auto_merge",
+        "close",
+        "reopen",
     }
     if action in ADMIN_ACTIONS:
         if not is_admin:
             # SECURITY: Log blocked admin action attempt
-            logger.warning(f"SECURITY: Blocked PR admin action '{action}' for non-admin user {context_user_name} (id={context_user_id})")
-            return {"error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"}
+            logger.warning(
+                f"SECURITY: Blocked PR admin action '{action}' for non-admin user {context_user_name} (id={context_user_id})"
+            )
+            return {
+                "error": f"The '{action}' action requires admin permissions. Ask a team member with admin access!"
+            }
         else:
-            logger.info(f"PR admin action '{action}' authorized for {context_user_name} (id={context_user_id})")
+            logger.info(
+                f"PR admin action '{action}' authorized for {context_user_name} (id={context_user_id})"
+            )
 
     # READ ACTIONS
     if action == "get":
@@ -1630,11 +1770,9 @@ async def tool_github_pr(
         if not pr_number:
             return {"error": "pr_number required for 'get_history' action"}
         from .github_graphql import github_graphql
+
         history = await github_graphql.get_edit_history(
-            number=pr_number,
-            is_pr=True,
-            limit=limit or 10,
-            edit_index=edit_index
+            number=pr_number, is_pr=True, limit=limit or 10, edit_index=edit_index
         )
         return history
 
@@ -1655,7 +1793,9 @@ async def tool_github_pr(
 
     elif action == "get_file_at_ref":
         if not file_path:
-            return {"error": "file_path required (e.g., file_path='.github/workflows/ci.yml', ref='main' or branch name)"}
+            return {
+                "error": "file_path required (e.g., file_path='.github/workflows/ci.yml', ref='main' or branch name)"
+            }
         return await github_pr_manager.get_file_at_ref(file_path, ref)
 
     # WRITE ACTIONS (admin)
@@ -1664,7 +1804,9 @@ async def tool_github_pr(
             return {"error": "pr_number required"}
         if not reviewers and not team_reviewers:
             return {"error": "reviewers or team_reviewers required"}
-        return await github_pr_manager.request_reviewers(pr_number, reviewers, team_reviewers)
+        return await github_pr_manager.request_reviewers(
+            pr_number, reviewers, team_reviewers
+        )
 
     elif action == "approve":
         if not pr_number:
@@ -1679,7 +1821,9 @@ async def tool_github_pr(
     elif action == "merge":
         if not pr_number:
             return {"error": "pr_number required"}
-        return await github_pr_manager.merge_pr(pr_number, commit_title, commit_message, merge_method)
+        return await github_pr_manager.merge_pr(
+            pr_number, commit_title, commit_message, merge_method
+        )
 
     elif action == "update":
         if not pr_number:
@@ -1699,7 +1843,9 @@ async def tool_github_pr(
     elif action == "create":
         if not title or not head:
             return {"error": "title and head (branch) required"}
-        return await github_pr_manager.create_pr(title, body or "", head, base or "main", draft)
+        return await github_pr_manager.create_pr(
+            title, body or "", head, base or "main", draft
+        )
 
     elif action == "convert_to_draft":
         if not pr_number:
@@ -1771,7 +1917,9 @@ async def tool_github_pr(
             return {"error": "pr_number required"}
         if not reviewers and not team_reviewers:
             return {"error": "reviewers or team_reviewers required"}
-        return await github_pr_manager.remove_reviewer(pr_number, reviewers, team_reviewers)
+        return await github_pr_manager.remove_reviewer(
+            pr_number, reviewers, team_reviewers
+        )
 
     # NEW: Auto-merge
     elif action == "enable_auto_merge":
@@ -1788,22 +1936,45 @@ async def tool_github_pr(
     elif action == "review":
         if not pr_number:
             return {"error": "pr_number required"}
-        return await github_pr_manager.review_pr(pr_number, post_review_to_github, reporter)
+        return await github_pr_manager.review_pr(
+            pr_number, post_review_to_github, reporter
+        )
 
     else:
         return {
             "error": f"Unknown action: {action}",
             "valid_actions": [
                 # Read
-                "get", "list", "get_files", "get_diff", "get_checks", "get_commits",
-                "get_threads", "get_review_comments", "get_file_at_ref",
+                "get",
+                "list",
+                "get_files",
+                "get_diff",
+                "get_checks",
+                "get_commits",
+                "get_threads",
+                "get_review_comments",
+                "get_file_at_ref",
                 # Write
-                "request_review", "remove_reviewer", "approve", "request_changes",
-                "merge", "update", "close", "reopen", "create", "convert_to_draft",
-                "ready_for_review", "update_branch", "comment",
-                "inline_comment", "suggest", "resolve_thread", "unresolve_thread",
-                "enable_auto_merge", "disable_auto_merge",
+                "request_review",
+                "remove_reviewer",
+                "approve",
+                "request_changes",
+                "merge",
+                "update",
+                "close",
+                "reopen",
+                "create",
+                "convert_to_draft",
+                "ready_for_review",
+                "update_branch",
+                "comment",
+                "inline_comment",
+                "suggest",
+                "resolve_thread",
+                "unresolve_thread",
+                "enable_auto_merge",
+                "disable_auto_merge",
                 # AI
-                "review"
-            ]
+                "review",
+            ],
         }

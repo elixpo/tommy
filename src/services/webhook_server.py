@@ -63,7 +63,9 @@ class GitHubWebhookServer:
         """Verify GitHub webhook signature."""
         if not config.webhook_secret:
             # SECURITY: Reject all webhooks if no secret configured
-            logger.error("GITHUB_WEBHOOK_SECRET not configured - rejecting webhook for security")
+            logger.error(
+                "GITHUB_WEBHOOK_SECRET not configured - rejecting webhook for security"
+            )
             return False
 
         if not signature:
@@ -75,9 +77,7 @@ class GitHubWebhookServer:
             signature = signature[7:]
 
         expected = hmac.new(
-            config.webhook_secret.encode(),
-            payload,
-            hashlib.sha256
+            config.webhook_secret.encode(), payload, hashlib.sha256
         ).hexdigest()
 
         return hmac.compare_digest(expected, signature)
@@ -103,7 +103,9 @@ class GitHubWebhookServer:
         repo = data.get("repository", {}).get("full_name", "")
         if not config.is_repo_whitelisted(repo):
             logger.info(f"Ignoring webhook from non-whitelisted repo: {repo}")
-            return web.json_response({"status": "ignored", "reason": "repo not whitelisted"})
+            return web.json_response(
+                {"status": "ignored", "reason": "repo not whitelisted"}
+            )
 
         # Get event type
         event_type = request.headers.get("X-GitHub-Event", "")
@@ -167,7 +169,7 @@ class GitHubWebhookServer:
             "comment_id": comment.get("id"),
             "comment_body": body,
             "commenter": commenter,
-            "issue_body": issue.get("body", "")[:1000],
+            "issue_body": issue.get("body", ""),
         }
 
         await self.process_mention(context)
@@ -266,7 +268,7 @@ class GitHubWebhookServer:
             "commenter": commenter,
             "file_path": comment.get("path"),
             "line": comment.get("line"),
-            "diff_hunk": comment.get("diff_hunk", "")[:500],
+            "diff_hunk": comment.get("diff_hunk", ""),
         }
 
         await self.process_mention(context)
@@ -312,12 +314,16 @@ class GitHubWebhookServer:
         2. Call AI with tools
         3. Post response back to GitHub
         """
-        logger.info(f"Processing GitHub mention: {context['type']} in {context.get('repo')}")
+        logger.info(
+            f"Processing GitHub mention: {context['type']} in {context.get('repo')}"
+        )
 
         from .pollinations import pollinations_client
 
         # Get the GitHub username
-        github_user = context.get("commenter") or context.get("author") or context.get("reviewer")
+        github_user = (
+            context.get("commenter") or context.get("author") or context.get("reviewer")
+        )
 
         # Check if user is a GitHub admin
         is_admin = config.is_github_admin(github_user)
@@ -325,7 +331,9 @@ class GitHubWebhookServer:
 
         # If admin_only_mentions is enabled, reject non-admin users
         if config.github_admin_only_mentions and not is_admin:
-            logger.info(f"Rejecting mention from non-admin user @{github_user} (admin_only_mentions=true)")
+            logger.info(
+                f"Rejecting mention from non-admin user @{github_user} (admin_only_mentions=true)"
+            )
             error_msg = (
                 f"Sorry @{github_user}, I'm currently configured to only respond to authorized team members. "
                 "If you need assistance, please reach out to the maintainers or join our Discord."
@@ -344,7 +352,7 @@ class GitHubWebhookServer:
                 thread_history=None,
                 image_urls=[],
                 is_admin=is_admin,
-                source="github"
+                source="github",
             )
 
             response_text = result.get("response", "")
@@ -360,7 +368,11 @@ class GitHubWebhookServer:
     def _build_prompt(self, context: dict, is_admin: bool) -> str:
         """Build a prompt for the AI from the GitHub context."""
         ctx_type = context["type"]
-        admin_note = "" if is_admin else "\n\n**Note: This user does NOT have admin privileges. Read-only operations only.**"
+        admin_note = (
+            ""
+            if is_admin
+            else "\n\n**Note: This user does NOT have admin privileges. Read-only operations only.**"
+        )
 
         if ctx_type == "issue_comment":
             return f"""[GitHub Issue Comment]
@@ -444,12 +456,12 @@ Respond to the reviewer's feedback.{admin_note}"""
             token = await github_app_auth.get_token()
             headers = {
                 "Authorization": f"token {token}",
-                "Accept": "application/vnd.github.v3+json"
+                "Accept": "application/vnd.github.v3+json",
             }
         else:
             headers = {
                 "Authorization": f"token {config.github_token}",
-                "Accept": "application/vnd.github.v3+json"
+                "Accept": "application/vnd.github.v3+json",
             }
 
         import aiohttp
@@ -483,7 +495,7 @@ Respond to the reviewer's feedback.{admin_note}"""
                 url,
                 headers=headers,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=30)
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
                 if resp.status in (200, 201):
                     logger.info(f"Posted response to GitHub: {url}")

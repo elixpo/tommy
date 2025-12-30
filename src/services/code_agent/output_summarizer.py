@@ -159,9 +159,6 @@ class OutputSummarizer:
             summary = self.extract_quick_summary(output)
             return summary.short_status
 
-        # Truncate output if too long
-        if len(output) > 5000:
-            output = output[-5000:]  # Last 5000 chars
 
         prompt = f"""Summarize this AI coding assistant's output in ONE short sentence (max {max_length} chars).
 Focus on: what was done, what file was changed, any errors.

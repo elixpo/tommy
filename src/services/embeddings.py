@@ -315,7 +315,7 @@ async def embed_repository(repo: str, force_full: bool = False) -> int:
 
                 all_ids.append(chunk_id)
                 all_embeddings.append(embedding.tolist())
-                all_documents.append(chunk["content"][:8000])  # Truncate for storage
+                all_documents.append(chunk["content"]
                 all_metadatas.append({
                     "file_path": rel_path,
                     "start_line": chunk["start_line"],

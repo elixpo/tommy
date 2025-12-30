@@ -26,8 +26,11 @@ def _get_model():
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
+
         logger.info("Loading embedding model for session...")
-        _model = SentenceTransformer("jinaai/jina-embeddings-v2-base-code", trust_remote_code=True)
+        _model = SentenceTransformer(
+            "jinaai/jina-embeddings-v2-base-code", trust_remote_code=True
+        )
     return _model
 
 
@@ -40,12 +43,14 @@ def _chunk_code(content: str, file_path: str, max_lines: int = 100) -> list[dict
     lines = content.split("\n")
 
     if len(lines) <= max_lines:
-        return [{
-            "content": content,
-            "file_path": file_path,
-            "start_line": 1,
-            "end_line": len(lines)
-        }]
+        return [
+            {
+                "content": content,
+                "file_path": file_path,
+                "start_line": 1,
+                "end_line": len(lines),
+            }
+        ]
 
     chunks = []
     current_chunk = []
@@ -54,28 +59,31 @@ def _chunk_code(content: str, file_path: str, max_lines: int = 100) -> list[dict
     for i, line in enumerate(lines, 1):
         current_chunk.append(line)
 
-        is_break = (
-            len(current_chunk) >= max_lines or
-            (len(current_chunk) >= 20 and _is_definition_start(line))
+        is_break = len(current_chunk) >= max_lines or (
+            len(current_chunk) >= 20 and _is_definition_start(line)
         )
 
         if is_break and current_chunk:
-            chunks.append({
-                "content": "\n".join(current_chunk),
-                "file_path": file_path,
-                "start_line": chunk_start,
-                "end_line": i
-            })
+            chunks.append(
+                {
+                    "content": "\n".join(current_chunk),
+                    "file_path": file_path,
+                    "start_line": chunk_start,
+                    "end_line": i,
+                }
+            )
             current_chunk = []
             chunk_start = i + 1
 
     if current_chunk:
-        chunks.append({
-            "content": "\n".join(current_chunk),
-            "file_path": file_path,
-            "start_line": chunk_start,
-            "end_line": len(lines)
-        })
+        chunks.append(
+            {
+                "content": "\n".join(current_chunk),
+                "file_path": file_path,
+                "start_line": chunk_start,
+                "end_line": len(lines),
+            }
+        )
 
     return chunks
 
@@ -84,21 +92,22 @@ def _is_definition_start(line: str) -> bool:
     """Check if line starts a function/class definition."""
     stripped = line.strip()
     return (
-        stripped.startswith("def ") or
-        stripped.startswith("class ") or
-        stripped.startswith("async def ") or
-        stripped.startswith("function ") or
-        stripped.startswith("const ") or
-        stripped.startswith("export ") or
-        stripped.startswith("pub fn ") or
-        stripped.startswith("fn ") or
-        stripped.startswith("func ")
+        stripped.startswith("def ")
+        or stripped.startswith("class ")
+        or stripped.startswith("async def ")
+        or stripped.startswith("function ")
+        or stripped.startswith("const ")
+        or stripped.startswith("export ")
+        or stripped.startswith("pub fn ")
+        or stripped.startswith("fn ")
+        or stripped.startswith("func ")
     )
 
 
 @dataclass
 class EmbeddedChunk:
     """A single embedded code chunk."""
+
     id: str
     file_path: str
     start_line: int
@@ -116,6 +125,7 @@ class SessionEmbeddings:
     Stores embeddings in-memory (no persistence needed since sandbox is temporary).
     Automatically updates when files are written.
     """
+
     sandbox_id: str
     chunks: dict[str, EmbeddedChunk] = field(default_factory=dict)
     files_indexed: set[str] = field(default_factory=set)
@@ -149,7 +159,8 @@ class SessionEmbeddings:
 
         # Remove old chunks for this file
         old_chunk_ids = [
-            chunk_id for chunk_id, chunk in self.chunks.items()
+            chunk_id
+            for chunk_id, chunk in self.chunks.items()
             if chunk.file_path == file_path
         ]
         for chunk_id in old_chunk_ids:
@@ -172,21 +183,24 @@ class SessionEmbeddings:
                 file_path=file_path,
                 start_line=chunk["start_line"],
                 end_line=chunk["end_line"],
-                content=chunk["content"][:8000],
+                content=chunk["content"],
                 embedding=embedding.tolist(),
                 content_hash=content_hash,
             )
             indexed_count += 1
 
         self.files_indexed.add(file_path)
-        logger.debug(f"Indexed {indexed_count} chunks from {file_path} in session {self.sandbox_id}")
+        logger.debug(
+            f"Indexed {indexed_count} chunks from {file_path} in session {self.sandbox_id}"
+        )
 
         return indexed_count
 
     async def remove_file(self, file_path: str):
         """Remove a file from the index."""
         old_chunk_ids = [
-            chunk_id for chunk_id, chunk in self.chunks.items()
+            chunk_id
+            for chunk_id, chunk in self.chunks.items()
             if chunk.file_path == file_path
         ]
         for chunk_id in old_chunk_ids:
@@ -216,6 +230,7 @@ class SessionEmbeddings:
 
         # Calculate cosine similarity with all chunks
         import numpy as np
+
         query_vec = np.array(query_embedding)
 
         results = []
@@ -227,14 +242,16 @@ class SessionEmbeddings:
                 np.linalg.norm(query_vec) * np.linalg.norm(chunk_vec)
             )
 
-            results.append({
-                "file_path": chunk.file_path,
-                "start_line": chunk.start_line,
-                "end_line": chunk.end_line,
-                "content": chunk.content,
-                "similarity": round(float(similarity), 3),
-                "source": "session",
-            })
+            results.append(
+                {
+                    "file_path": chunk.file_path,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "content": chunk.content,
+                    "similarity": round(float(similarity), 3),
+                    "source": "session",
+                }
+            )
 
         # Sort by similarity and return top_k
         results.sort(key=lambda x: x["similarity"], reverse=True)
@@ -294,7 +311,9 @@ class SessionEmbeddingsManager:
 
         return await session.index_file(file_path, content)
 
-    async def search_session(self, sandbox_id: str, query: str, top_k: int = 5) -> list[dict]:
+    async def search_session(
+        self, sandbox_id: str, query: str, top_k: int = 5
+    ) -> list[dict]:
         """Search only session embeddings."""
         session = self.sessions.get(sandbox_id)
         if not session:
@@ -332,7 +351,9 @@ class SessionEmbeddingsManager:
         # Search session embeddings first (with boosted scores)
         session_results = await self.search_session(sandbox_id, query, top_k=top_k)
         for r in session_results:
-            r["similarity"] = min(1.0, r["similarity"] * session_weight)  # Boost but cap at 1.0
+            r["similarity"] = min(
+                1.0, r["similarity"] * session_weight
+            )  # Boost but cap at 1.0
             results.append(r)
             seen_files.add(r["file_path"])
 

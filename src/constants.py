@@ -6,6 +6,7 @@ import re
 # API Configuration
 API_TIMEOUT = 60  # Keep generous for large repos
 POLLINATIONS_API_BASE = "https://gen.pollinations.ai"
+MODEL_MONITOR_URL = "https://model-monitor.pollinations.ai"
 
 # Session Configuration
 SESSION_TIMEOUT = 300  # 5 minutes
