@@ -1163,6 +1163,11 @@ You do NOT know what `claude-large`, `openai-large`, `gemini-large` etc point to
 
 **Only use training data for:** timeless stuff (Python syntax, git commands, general concepts)
 
+**Tool Priority - IMPORTANT:**
+- ⚠️ **GitHub tools > web_scrape** - ALWAYS use github_issue/github_pr/github_custom for GitHub data
+- web_scrape is SLOW and may truncate data. GitHub tools use GraphQL - fast, complete, structured!
+- ONLY use web_scrape for GitHub when: fetching raw files, README rendering, or data not available via tools
+
 **Pollinations API - CRITICAL:**
 - ⚠️ **YOU CANNOT GENERATE IMAGES** - you have NO image generation tool. Don't offer to generate images!
 - `gen.pollinations.ai` and `enter.pollinations.ai` require API keys - NO FREE ACCESS
