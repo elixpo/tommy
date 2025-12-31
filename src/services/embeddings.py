@@ -26,17 +26,63 @@ EMBEDDINGS_DIR = DATA_DIR / "embeddings"
 
 # File extensions to embed
 CODE_EXTENSIONS = {
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".c", ".cpp",
-    ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".kt", ".scala", ".vue",
-    ".svelte", ".html", ".css", ".scss", ".json", ".yaml", ".yml", ".toml",
-    ".md", ".mdx", ".sql", ".sh", ".bash", ".zsh", ".dockerfile", ".tf"
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".scala",
+    ".vue",
+    ".svelte",
+    ".html",
+    ".css",
+    ".scss",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".md",
+    ".mdx",
+    ".sql",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".dockerfile",
+    ".tf",
 }
 
 # Directories to skip
 SKIP_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv", "env",
-    "dist", "build", ".next", ".nuxt", "target", "bin", "obj",
-    ".idea", ".vscode", "coverage", ".pytest_cache", ".mypy_cache"
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    "target",
+    "bin",
+    "obj",
+    ".idea",
+    ".vscode",
+    "coverage",
+    ".pytest_cache",
+    ".mypy_cache",
 }
 
 # Max file size to embed (500KB)
@@ -53,8 +99,11 @@ def _get_model():
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
+
         logger.info("Loading Jina embeddings model (first time may download ~500MB)...")
-        _model = SentenceTransformer("jinaai/jina-embeddings-v2-base-code", trust_remote_code=True)
+        _model = SentenceTransformer(
+            "jinaai/jina-embeddings-v2-base-code", trust_remote_code=True
+        )
         logger.info("Embedding model loaded")
     return _model
 
@@ -68,8 +117,7 @@ def _get_collection():
         EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
         _chroma_client = chromadb.PersistentClient(path=str(EMBEDDINGS_DIR))
         _collection = _chroma_client.get_or_create_collection(
-            name="code_embeddings",
-            metadata={"hnsw:space": "cosine"}
+            name="code_embeddings", metadata={"hnsw:space": "cosine"}
         )
         logger.info(f"ChromaDB collection loaded with {_collection.count()} embeddings")
     return _collection
@@ -86,12 +134,14 @@ def _chunk_code(content: str, file_path: str, max_lines: int = 100) -> list[dict
 
     # Small file - embed whole thing
     if len(lines) <= max_lines:
-        return [{
-            "content": content,
-            "file_path": file_path,
-            "start_line": 1,
-            "end_line": len(lines)
-        }]
+        return [
+            {
+                "content": content,
+                "file_path": file_path,
+                "start_line": 1,
+                "end_line": len(lines),
+            }
+        ]
 
     chunks = []
     current_chunk = []
@@ -101,29 +151,32 @@ def _chunk_code(content: str, file_path: str, max_lines: int = 100) -> list[dict
         current_chunk.append(line)
 
         # Check for natural break points (function/class definitions)
-        is_break = (
-            len(current_chunk) >= max_lines or
-            (len(current_chunk) >= 20 and _is_definition_start(line))
+        is_break = len(current_chunk) >= max_lines or (
+            len(current_chunk) >= 20 and _is_definition_start(line)
         )
 
         if is_break and current_chunk:
-            chunks.append({
-                "content": "\n".join(current_chunk),
-                "file_path": file_path,
-                "start_line": chunk_start,
-                "end_line": i
-            })
+            chunks.append(
+                {
+                    "content": "\n".join(current_chunk),
+                    "file_path": file_path,
+                    "start_line": chunk_start,
+                    "end_line": i,
+                }
+            )
             current_chunk = []
             chunk_start = i + 1
 
     # Don't forget the last chunk
     if current_chunk:
-        chunks.append({
-            "content": "\n".join(current_chunk),
-            "file_path": file_path,
-            "start_line": chunk_start,
-            "end_line": len(lines)
-        })
+        chunks.append(
+            {
+                "content": "\n".join(current_chunk),
+                "file_path": file_path,
+                "start_line": chunk_start,
+                "end_line": len(lines),
+            }
+        )
 
     return chunks
 
@@ -132,15 +185,15 @@ def _is_definition_start(line: str) -> bool:
     """Check if line starts a function/class definition."""
     stripped = line.strip()
     return (
-        stripped.startswith("def ") or
-        stripped.startswith("class ") or
-        stripped.startswith("async def ") or
-        stripped.startswith("function ") or
-        stripped.startswith("const ") or
-        stripped.startswith("export ") or
-        stripped.startswith("pub fn ") or
-        stripped.startswith("fn ") or
-        stripped.startswith("func ")
+        stripped.startswith("def ")
+        or stripped.startswith("class ")
+        or stripped.startswith("async def ")
+        or stripped.startswith("function ")
+        or stripped.startswith("const ")
+        or stripped.startswith("export ")
+        or stripped.startswith("pub fn ")
+        or stripped.startswith("fn ")
+        or stripped.startswith("func ")
     )
 
 
@@ -165,7 +218,7 @@ async def clone_or_pull_repo(repo: str) -> bool:
                 subprocess.run,
                 ["git", "-C", str(repo_path), "fetch", "origin", "main"],
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             # Compare local vs remote
@@ -173,13 +226,13 @@ async def clone_or_pull_repo(repo: str) -> bool:
                 subprocess.run,
                 ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
                 capture_output=True,
-                text=True
+                text=True,
             )
             remote = await asyncio.to_thread(
                 subprocess.run,
                 ["git", "-C", str(repo_path), "rev-parse", "origin/main"],
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             if local.stdout.strip() == remote.stdout.strip():
@@ -192,7 +245,7 @@ async def clone_or_pull_repo(repo: str) -> bool:
                 subprocess.run,
                 ["git", "-C", str(repo_path), "pull", "origin", "main"],
                 capture_output=True,
-                text=True
+                text=True,
             )
             return True
         else:
@@ -200,9 +253,15 @@ async def clone_or_pull_repo(repo: str) -> bool:
             logger.info(f"Cloning {repo}...")
             await asyncio.to_thread(
                 subprocess.run,
-                ["git", "clone", "--depth=1", f"https://github.com/{repo}.git", str(repo_path)],
+                [
+                    "git",
+                    "clone",
+                    "--depth=1",
+                    f"https://github.com/{repo}.git",
+                    str(repo_path),
+                ],
                 capture_output=True,
-                text=True
+                text=True,
             )
             return True
 
@@ -220,7 +279,7 @@ async def get_changed_files(repo: str) -> list[str]:
             subprocess.run,
             ["git", "-C", str(repo_path), "diff", "--name-only", "HEAD~1", "HEAD"],
             capture_output=True,
-            text=True
+            text=True,
         )
 
         if result.returncode == 0:
@@ -309,19 +368,19 @@ async def embed_repository(repo: str, force_full: bool = False) -> int:
                             continue
 
                 # Generate embedding
-                embedding = await asyncio.to_thread(
-                    model.encode, chunk["content"]
-                )
+                embedding = await asyncio.to_thread(model.encode, chunk["content"])
 
                 all_ids.append(chunk_id)
                 all_embeddings.append(embedding.tolist())
-                all_documents.append(chunk["content"]
-                all_metadatas.append({
-                    "file_path": rel_path,
-                    "start_line": chunk["start_line"],
-                    "end_line": chunk["end_line"],
-                    "hash": content_hash
-                })
+                all_documents.append(chunk["content"])
+                all_metadatas.append(
+                    {
+                        "file_path": rel_path,
+                        "start_line": chunk["start_line"],
+                        "end_line": chunk["end_line"],
+                        "hash": content_hash,
+                    }
+                )
 
                 embedded_count += 1
 
@@ -335,7 +394,7 @@ async def embed_repository(repo: str, force_full: bool = False) -> int:
             ids=all_ids,
             embeddings=all_embeddings,
             documents=all_documents,
-            metadatas=all_metadatas
+            metadatas=all_metadatas,
         )
         logger.info(f"Embedded {embedded_count} chunks")
 
@@ -366,7 +425,7 @@ async def search_code(query: str, top_k: int = 5) -> list[dict]:
     results = collection.query(
         query_embeddings=[query_embedding.tolist()],
         n_results=top_k,
-        include=["documents", "metadatas", "distances"]
+        include=["documents", "metadatas", "distances"],
     )
 
     # Format results
@@ -375,13 +434,15 @@ async def search_code(query: str, top_k: int = 5) -> list[dict]:
         metadata = results["metadatas"][0][i]
         distance = results["distances"][0][i]
 
-        formatted.append({
-            "file_path": metadata["file_path"],
-            "start_line": metadata["start_line"],
-            "end_line": metadata["end_line"],
-            "content": doc,
-            "similarity": round(1 - distance, 3)  # Convert distance to similarity
-        })
+        formatted.append(
+            {
+                "file_path": metadata["file_path"],
+                "start_line": metadata["start_line"],
+                "end_line": metadata["end_line"],
+                "content": doc,
+                "similarity": round(1 - distance, 3),  # Convert distance to similarity
+            }
+        )
 
     return formatted
 
@@ -481,7 +542,7 @@ def get_stats() -> dict:
     return {
         "total_chunks": collection.count(),
         "repo_dir": str(REPO_DIR),
-        "embeddings_dir": str(EMBEDDINGS_DIR)
+        "embeddings_dir": str(EMBEDDINGS_DIR),
     }
 
 
