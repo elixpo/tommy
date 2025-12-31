@@ -269,6 +269,9 @@ async def fetch_thread_history(
     This is our "memory" - pulled fresh from Discord each time.
 
     Also includes existing task state if there's an active coding task for this thread.
+
+    NOTE: We skip the most recent message (limit+1 then [1:]) because that's the
+    current message being processed - it gets added separately in process_with_tools.
     """
     messages = []
 
@@ -307,8 +310,16 @@ async def fetch_thread_history(
             logger.warning(f"Failed to fetch starter message: {e}")
 
         # Fetch most recent messages (newest first), then reverse to chronological order
+        # Skip the first message (newest) since that's the current message being processed
+        # It will be added separately in process_with_tools to avoid duplication
         fetched = []
-        async for msg in thread.history(limit=limit):  # newest first (default)
+        is_first = True
+        async for msg in thread.history(
+            limit=limit + 1
+        ):  # +1 to account for skipping current
+            if is_first:
+                is_first = False
+                continue  # Skip the current message (newest)
             if msg.author.bot:
                 fetched.append({"role": "assistant", "content": msg.content})
             else:
