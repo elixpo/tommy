@@ -174,24 +174,30 @@ def extract_media_urls(
     video_urls = []
     file_urls = []
 
-    # Process attachments
+    # Process attachments - use content_type FIRST (Discord provides this reliably)
+    # Order: image -> video -> text file -> fallback
     for attachment in message.attachments:
         url = attachment.url
-        if is_video_url(url):
+        content_type = getattr(attachment, "content_type", "") or ""
+
+        # Images first (highest priority for vision)
+        if content_type.startswith("image/") and "gif" not in content_type:
+            image_urls.append(url)
+        elif is_image_url(url) and ".gif" not in url.lower():
+            image_urls.append(url)
+        # Videos (including GIFs)
+        elif content_type.startswith("video/") or content_type == "image/gif":
             video_urls.append(url)
+        elif is_video_url(url):
+            video_urls.append(url)
+        # Text/code files
+        elif content_type.startswith("text/") or content_type in ("application/json", "application/javascript"):
+            file_urls.append(url)
         elif is_text_file_url(url):
-            file_urls.append(url)  # Text files go to file_urls, NOT image_urls
-        elif is_image_url(url):
-            image_urls.append(url)  # Explicit images
+            file_urls.append(url)
+        # Fallback - unknown goes to files
         else:
-            # Unknown type - check content_type if available
-            content_type = getattr(attachment, "content_type", "") or ""
-            if content_type.startswith("image/"):
-                image_urls.append(url)
-            else:
-                # Unknown file type - treat as file, let web_scrape handle it
-                # This covers .fwffo, .xyz, or any random extension
-                file_urls.append(url)
+            file_urls.append(url)
 
     # Process embeds
     for embed in message.embeds:
