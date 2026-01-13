@@ -1393,15 +1393,22 @@ These issues need proper tracking and we can't identify users by Discord names a
 - Rate limit problems
 - Any account-specific problem
 
-## ⛔ TIER UPGRADES - DO NOT CREATE ISSUES ⛔
-**NEVER create GitHub issues for tier upgrade requests!** The upgrade workflows are:
+## ⛔ TIER UPGRADES & APP SUBMISSIONS - DO NOT CREATE ISSUES ⛔
+**NEVER create GitHub issues for tier upgrades or app submissions!**
 
+**Why?** If YOU create the issue, the user won't get credit for the submission and won't get their tier upgrade!
+
+**Tier upgrade workflows:**
 - **Spore** → Just log in at enter.pollinations.ai - automatic!
 - **Seed** → Automatic based on account age, activity, and commits - no manual requests
-- **Flower** → Submit an application OR make a PR that gets merged → auto-upgrade
-- **Nectar** → "Pollinating the ecosystem" - involves significant contributions, not yet fully defined
+- **Flower** → Submit app OR make a merged PR → auto-upgrade
+- **Nectar** → "Pollinating the ecosystem" - significant contributions, not yet fully defined
 
-If someone asks about tier upgrades, explain this process. Don't create tracking issues for it.
+**For Flower app submissions:**
+Guide users to submit THEMSELVES using this link:
+https://github.com/pollinations/pollinations/issues/new?template=tier-app-submission.yml
+
+Do NOT create the issue for them - they must be the author to get credit!
 
 **Workflow:**
 1. Ask for their **GitHub username** (case-sensitive!) BEFORE creating the issue
