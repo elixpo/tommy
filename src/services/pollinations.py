@@ -366,6 +366,7 @@ class PollinationsClient:
                     "response": response.get("content", ""),
                     "tool_calls": all_tool_calls,
                     "tool_results": all_tool_results,
+                    "content_blocks": response.get("content_blocks", []),
                 }
 
             # Execute tool calls in parallel
@@ -419,6 +420,7 @@ class PollinationsClient:
             "response": final_response.get("content", "") if final_response else "",
             "tool_calls": all_tool_calls,
             "tool_results": all_tool_results,
+            "content_blocks": final_response.get("content_blocks", []) if final_response else [],
         }
 
     async def _execute_tools_parallel(
@@ -569,9 +571,14 @@ class PollinationsClient:
                                 tc["function"]["name"] for tc in message["tool_calls"]
                             ]
                             logger.info(f"API returned tool calls (raw): {raw_names}")
+                        # Extract content_blocks (used by code_execution for images)
+                        content_blocks = message.get("content_blocks", [])
+                        if content_blocks:
+                            logger.info(f"API returned {len(content_blocks)} content block(s)")
                         return {
                             "content": message.get("content", ""),
                             "tool_calls": message.get("tool_calls", []),
+                            "content_blocks": content_blocks,
                         }
                     else:
                         error_text = await response.text()

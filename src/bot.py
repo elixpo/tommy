@@ -1,6 +1,8 @@
 """Discord bot - Full GitHub Issues bridge with native tool calling."""
 
 import asyncio
+import base64
+import io
 import logging
 from typing import Optional, Union
 
@@ -151,6 +153,62 @@ def is_image_url(url: str) -> bool:
         if ext in url_lower:
             return True
     return False
+
+
+def decode_base64_images(content_blocks: list[dict], max_images: int = 10) -> list[discord.File]:
+    """
+    Decode base64 images from content_blocks to discord.File objects.
+
+    content_blocks format from code_execution:
+    [{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}]
+
+    Args:
+        content_blocks: List of content blocks from API response
+        max_images: Maximum number of images to decode (Discord limit is 10)
+
+    Returns:
+        List of discord.File objects ready to send
+    """
+    files = []
+    image_count = 0
+
+    for block in content_blocks:
+        if image_count >= max_images:
+            break
+
+        if block.get("type") != "image_url":
+            continue
+
+        image_url = block.get("image_url", {}).get("url", "")
+        if not image_url.startswith("data:image/"):
+            continue
+
+        try:
+            # Parse data URL: data:image/png;base64,<data>
+            header, b64_data = image_url.split(",", 1)
+            # Extract mime type: data:image/png;base64 -> image/png
+            mime_type = header.split(":")[1].split(";")[0]
+            # Get file extension from mime type
+            ext = mime_type.split("/")[1]
+            if ext == "jpeg":
+                ext = "jpg"
+
+            # Decode base64
+            image_bytes = base64.b64decode(b64_data)
+
+            # Create discord.File
+            file_buffer = io.BytesIO(image_bytes)
+            filename = f"code_execution_{image_count + 1}.{ext}"
+            files.append(discord.File(file_buffer, filename=filename))
+
+            image_count += 1
+            logger.info(f"Decoded base64 image: {filename} ({len(image_bytes)} bytes)")
+
+        except Exception as e:
+            logger.warning(f"Failed to decode base64 image: {e}")
+            continue
+
+    return files
 
 
 def extract_media_urls(
@@ -1170,6 +1228,12 @@ async def process_message(
         response_text = result.get("response", "")
         tool_calls = result.get("tool_calls", [])
         tool_results = result.get("tool_results", [])
+        content_blocks = result.get("content_blocks", [])
+
+        # Decode any base64 images from content_blocks (e.g., from code_execution)
+        image_files = decode_base64_images(content_blocks, max_images=10)
+        if image_files:
+            logger.info(f"Decoded {len(image_files)} image(s) from content_blocks")
 
         # Log tool usage for debugging
         if tool_calls:
@@ -1227,8 +1291,10 @@ async def process_message(
             )
             response_text = retry_result.get("content", "") if retry_result else ""
 
-        if response_text:
-            await send_long_message(channel, response_text, reply_to=reply_to)
+        if response_text or image_files:
+            await send_long_message(
+                channel, response_text or "Here's the result:", reply_to=reply_to, files=image_files
+            )
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
@@ -1240,13 +1306,32 @@ async def send_long_message(
     text: str,
     max_length: int = 2000,
     reply_to: Optional[discord.Message] = None,
+    files: Optional[list[discord.File]] = None,
 ):
-    """Send a message, splitting if too long. First chunk replies to message if provided."""
+    """
+    Send a message, splitting if too long. First chunk replies to message if provided.
+
+    Args:
+        channel: Channel or thread to send to
+        text: Message text
+        max_length: Max characters per message (Discord limit 2000)
+        reply_to: Optional message to reply to (only for first chunk)
+        files: Optional list of discord.File to attach (only to first message, max 10)
+    """
+    # Files only go with the first message - Discord max 10 files
+    files_to_send = files[:10] if files else []
+
     if len(text) <= max_length:
         if reply_to:
-            await reply_to.reply(text)
+            if files_to_send:
+                await reply_to.reply(text, files=files_to_send)
+            else:
+                await reply_to.reply(text)
         else:
-            await channel.send(text)
+            if files_to_send:
+                await channel.send(text, files=files_to_send)
+            else:
+                await channel.send(text)
         return
 
     # Split on newlines first, then by length
@@ -1266,9 +1351,17 @@ async def send_long_message(
 
     for i, chunk in enumerate(chunks):
         if chunk:
-            # Reply to user's message for first chunk only
+            # Reply to user's message for first chunk only, with files
             if i == 0 and reply_to:
-                await reply_to.reply(chunk)
+                if files_to_send:
+                    await reply_to.reply(chunk, files=files_to_send)
+                else:
+                    await reply_to.reply(chunk)
+            elif i == 0:
+                if files_to_send:
+                    await channel.send(chunk, files=files_to_send)
+                else:
+                    await channel.send(chunk)
             else:
                 await channel.send(chunk)
 
