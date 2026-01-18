@@ -343,6 +343,9 @@ class PollinationsClient:
         if len(tools) < len(all_tools):
             logger.info(f"Filtered tools to: {', '.join(filtered_tool_names)}")
 
+        # Accumulate content_blocks across all iterations (code_execution images etc.)
+        all_content_blocks = []
+
         for iteration in range(max_iterations):
             start_time = time.time()
             response = await self._call_api_with_tools(messages, tools=tools)
@@ -354,8 +357,15 @@ class PollinationsClient:
                     "response": "Sorry, I had trouble processing that. Could you try again?",
                     "tool_calls": all_tool_calls,
                     "tool_results": all_tool_results,
+                    "content_blocks": all_content_blocks,
                     "error": True,
                 }
+
+            # Collect content_blocks from every response (images from code_execution etc.)
+            response_blocks = response.get("content_blocks", [])
+            if response_blocks:
+                all_content_blocks.extend(response_blocks)
+                logger.info(f"Collected {len(response_blocks)} content block(s) from iteration {iteration + 1}")
 
             # Check if model wants to call tools
             tool_calls = response.get("tool_calls", [])
@@ -366,7 +376,7 @@ class PollinationsClient:
                     "response": response.get("content", ""),
                     "tool_calls": all_tool_calls,
                     "tool_results": all_tool_results,
-                    "content_blocks": response.get("content_blocks", []),
+                    "content_blocks": all_content_blocks,
                 }
 
             # Execute tool calls in parallel
@@ -416,11 +426,16 @@ class PollinationsClient:
 
         # Max iterations reached, get final response
         final_response = await self._call_api_with_tools(messages, tools=None)
+        # Collect any remaining content_blocks from final response
+        if final_response:
+            final_blocks = final_response.get("content_blocks", [])
+            if final_blocks:
+                all_content_blocks.extend(final_blocks)
         return {
             "response": final_response.get("content", "") if final_response else "",
             "tool_calls": all_tool_calls,
             "tool_results": all_tool_results,
-            "content_blocks": final_response.get("content_blocks", []) if final_response else [],
+            "content_blocks": all_content_blocks,
         }
 
     async def _execute_tools_parallel(
