@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import logging
+import re
 from typing import Optional, Union
 
 import discord
@@ -1234,6 +1235,10 @@ async def process_message(
         image_files = decode_base64_images(content_blocks, max_images=10)
         if image_files:
             logger.info(f"Decoded {len(image_files)} image(s) from content_blocks")
+            # Strip useless file:/// local paths from response (images are sent as attachments)
+            response_text = re.sub(r'\[([^\]]*)\]\(file:///[^)]+\)\n?', '', response_text)
+            response_text = re.sub(r'file:///[^\s\)]+', '', response_text)
+            response_text = response_text.strip()
 
         # Log tool usage for debugging
         if tool_calls:
