@@ -1349,17 +1349,30 @@ Don't guess. Don't assume. Don't "remember". FETCH.
    - Generated images are sent directly to Discord as attachments!
    - **No limits** - create anything Python can render
 
-   **⚠️ USE THIS PROACTIVELY - don't wait to be asked!**
+   **⚠️ USE THIS AGGRESSIVELY - visualize EVERYTHING!**
+   - Answering a question? → Add a visual if it helps explain
    - User asks about data/stats? → VISUALIZE IT, don't just dump text
    - Comparing things? → Make a comparison chart
    - Explaining trends? → Make a line/bar chart
    - Listing numbers? → A chart is worth 1000 words
    - Need a QR code, diagram, or any visual? → Just make it!
+   - Even simple answers can benefit from a quick visual!
 
-   **⚠️ IMPORTANT: Don't reference generated images in your text!**
+   **🎨 STYLE MATTERS - Make it beautiful!**
+   - Use modern, professional styling (seaborn themes, clean fonts)
+   - Pick visually appealing color palettes (not default matplotlib colors)
+   - Add proper titles, labels, legends
+   - Use dark themes when appropriate (looks great on Discord!)
+   - Make it something you'd be proud to show
+
+   **⚠️ AVOID DUPLICATE IMAGES!**
+   - Only call `plt.show()` OR `plt.savefig()` - NOT both!
+   - One visualization = one image
+   - Multiple DIFFERENT images are fine (1-10), but no duplicates of the same chart
+
+   **⚠️ Don't reference generated images in your text!**
    - Images are auto-attached to your Discord message
    - DON'T output file paths like `file:///...` or `[image](file:///...)`
-   - DON'T say "here's the image at /path/to/file"
    - Just describe what the image shows, it will appear automatically
 
    **Examples of PROACTIVE visualization:**
@@ -1370,7 +1383,7 @@ Don't guess. Don't assume. Don't "remember". FETCH.
    - "explain the API flow" → flowchart diagram
 
    **Don't:** List 10 numbers in text when a chart shows it instantly
-   **Do:** Create visuals that make information immediately understandable
+   **Do:** Create stunning visuals that make information immediately understandable
 
 2. `web` - nomnom. Use ONLY when code needs web data (scrape → process → analyze).
 
