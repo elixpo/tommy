@@ -9,38 +9,11 @@ Crawl4AI v0.7.8+ features:
 
 import asyncio
 import logging
-import hashlib
-import time
 import re
 from typing import Optional, Dict, Any, List, Union
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
-
-# Simple in-memory cache with TTL
-_scrape_cache: dict[str, tuple[float, dict]] = {}
-CACHE_TTL = 300  # 5 minutes
-
-
-def _get_cache_key(url: str, params: Optional[str] = None) -> str:
-    """Generate cache key from URL and params."""
-    key_str = url + (params or "")
-    return hashlib.md5(key_str.encode()).hexdigest()
-
-
-def _get_cached(key: str) -> Optional[dict]:
-    """Get cached result if not expired."""
-    if key in _scrape_cache:
-        timestamp, result = _scrape_cache[key]
-        if time.time() - timestamp < CACHE_TTL:
-            return result
-        del _scrape_cache[key]
-    return None
-
-
-def _set_cache(key: str, result: dict):
-    """Cache a result."""
-    _scrape_cache[key] = (time.time(), result)
 
 
 # =============================================================================
@@ -84,7 +57,6 @@ async def scrape_url(
     remove_overlays: bool = True,  # Remove popups/modals
     # Performance options
     timeout: int = 30,
-    use_cache: bool = True,
     headless: bool = True,
     # Session reuse
     session_id: Optional[str] = None,
@@ -131,7 +103,6 @@ async def scrape_url(
 
         # Performance:
         timeout: Request timeout in seconds
-        use_cache: Use cached results
         headless: Run browser headless
         session_id: Reuse browser session
 
@@ -149,18 +120,6 @@ async def scrape_url(
             }
     except Exception:
         return {"success": False, "url": url, "error": "Invalid URL format"}
-
-    # Check cache
-    cache_params = (
-        f"{extraction_strategy}:{schema}:{instruction}:{content_filter}:{output_format}"
-    )
-    cache_key = _get_cache_key(url, cache_params)
-    if use_cache:
-        cached = _get_cached(cache_key)
-        if cached:
-            logger.debug(f"Cache hit for {url}")
-            cached["cached"] = True
-            return cached
 
     try:
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
@@ -197,7 +156,7 @@ async def scrape_url(
             word_count_threshold=10,
             excluded_tags=["nav", "footer", "aside", "script", "style", "noscript"],
             remove_overlay_elements=remove_overlays,
-            cache_mode=CacheMode.ENABLED if use_cache else CacheMode.DISABLED,
+            cache_mode=CacheMode.DISABLED,  # Always fresh data
             # Extraction
             extraction_strategy=ext_strategy,
             # Markdown generator with content filter
@@ -296,10 +255,6 @@ async def scrape_url(
                     for k, v in result.metadata.items()
                     if k in ["title", "description", "author", "language", "og:image"]
                 }
-
-            # Cache successful result
-            if use_cache:
-                _set_cache(cache_key, response)
 
             return response
 
