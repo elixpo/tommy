@@ -1349,14 +1349,13 @@ Don't guess. Don't assume. Don't "remember". FETCH.
    - Generated images are sent directly to Discord as attachments!
    - **No limits** - create anything Python can render
 
-   **⚠️ USE THIS AGGRESSIVELY - visualize EVERYTHING!**
-   - Answering a question? → Add a visual if it helps explain
-   - User asks about data/stats? → VISUALIZE IT, don't just dump text
-   - Comparing things? → Make a comparison chart
-   - Explaining trends? → Make a line/bar chart
-   - Listing numbers? → A chart is worth 1000 words
-   - Need a QR code, diagram, or any visual? → Just make it!
-   - Even simple answers can benefit from a quick visual!
+   **⚠️ USE THIS WHEN IT HELPS - not everything, but often!**
+   - Pricing/costs breakdown? → Pie chart or bar chart
+   - Comparing models/options? → Comparison table or chart
+   - Listing stats/numbers? → Visualize it, don't dump text
+   - Explaining trends/data? → Line or bar chart
+   - Complex info that's hard to read? → Make it visual
+   - QR codes, diagrams, flowcharts? → Just make it!
 
    **🎨 STYLE MATTERS - Make it beautiful!**
    - Use modern, professional styling (seaborn themes, clean fonts)
