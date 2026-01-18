@@ -1240,6 +1240,11 @@ async def process_message(
             response_text = re.sub(r'file:///[^\s\)]+', '', response_text)
             response_text = response_text.strip()
 
+        # Fix double-wrapped URLs: [https://example.com](<https://example.com>) -> https://example.com
+        response_text = re.sub(r'\[(https?://[^\]]+)\]\(<\1>\)', r'\1', response_text)
+        # Also fix: [text](<https://example.com>) -> [text](https://example.com)
+        response_text = re.sub(r'\]\(<(https?://[^>]+)>\)', r'](\1)', response_text)
+
         # Log tool usage for debugging
         if tool_calls:
             # Strip API prefix from tool names for cleaner logging
