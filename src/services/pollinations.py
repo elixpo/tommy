@@ -883,15 +883,15 @@ async def web_search_handler(query: str, **kwargs) -> dict:
 async def web_handler(query: str, **kwargs) -> dict:
     """
     Handle web tool calls using nomnom model for deep research.
-    
+
     nomnom combines search, scrape, crawl, and code execution for complex tasks.
     Use sparingly - it's powerful but slower and more expensive than simple tools.
-    
+
     Args:
         query: Natural language request describing what to research/analyze
-        
+
     Returns:
-        Dict with research results or error
+        Dict with research results, including any generated images
     """
     messages = [
         {
@@ -921,8 +921,23 @@ async def web_handler(query: str, **kwargs) -> dict:
         ) as response:
             if response.status == 200:
                 data = await response.json()
-                content = data["choices"][0]["message"].get("content", "")
-                return {"result": content, "model": "nomnom", "query": query}
+                message = data["choices"][0]["message"]
+                content = message.get("content", "")
+
+                # Extract image URLs from content_blocks (nomnom can generate images)
+                content_blocks = message.get("content_blocks", [])
+                image_urls = []
+                for block in content_blocks:
+                    if block.get("type") == "image_url":
+                        img_url = block.get("image_url", {}).get("url", "")
+                        if img_url and img_url.startswith("http"):
+                            image_urls.append(img_url)
+
+                result = {"result": content, "model": "nomnom", "query": query}
+                if image_urls:
+                    result["image_urls"] = image_urls
+                    logger.info(f"nomnom returned {len(image_urls)} image(s)")
+                return result
             else:
                 error_text = await response.text()
                 logger.error(
