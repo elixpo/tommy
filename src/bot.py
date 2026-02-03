@@ -969,9 +969,11 @@ async def on_message(message: discord.Message):
 
     # Check for casual "polly" mention OR reply to bot (case-insensitive)
     # This triggers inline reply WITHOUT creating a thread
-    if ("polly" in message.content.lower() or is_reply_to_bot) and not (bot.user and bot.user.mentioned_in(message)):
-        await handle_inline_polly_mention(message)
-        return
+    # Skip if we're already in a thread (handled above)
+    if not isinstance(message.channel, discord.Thread):
+        if ("polly" in message.content.lower() or is_reply_to_bot) and not (bot.user and bot.user.mentioned_in(message)):
+            await handle_inline_polly_mention(message)
+            return
 
     # ONLY respond if @mentioned (not just replying)
     # Thread creation is ONLY for @polly, not replies
