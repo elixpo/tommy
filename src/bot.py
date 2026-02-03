@@ -1012,36 +1012,6 @@ async def on_message(message: discord.Message):
     if not text and (image_urls or video_urls or file_urls):
         text = "[User attached media/files]"
 
-    # Check if message already has a thread - if so, respond there instead of creating new
-    if hasattr(message, "thread") and message.thread:
-        # Message already has a thread, use it
-        thread = message.thread
-        topic = pollinations_client.get_topic_summary_fast(text)
-        session = session_manager.get_session(thread.id)
-        if not session:
-            session = session_manager.create_session(
-                channel_id=message.channel.id,
-                thread_id=thread.id,
-                user_id=message.author.id,
-                user_name=str(message.author),
-                initial_message=text,
-                topic_summary=topic,
-                image_urls=image_urls
-                + video_urls,  # Combined for session storage (not files)
-            )
-        async with thread.typing():
-            await process_message(
-                channel=thread,
-                user=message.author,
-                text=text,
-                image_urls=image_urls,
-                session=session,
-                reply_to=None,
-                video_urls=video_urls,
-                file_urls=file_urls,
-            )
-        return
-
     # Create thread and start new conversation
     await start_conversation(message, text, image_urls, video_urls, file_urls)
 
