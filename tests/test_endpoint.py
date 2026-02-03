@@ -3,7 +3,7 @@
 import requests
 import json
 
-url = "http://157.230.129.96:8000/v1/chat/completions"
+url = "http://157.230.129.96:8003/v1/chat/completions"
 
 payload = {
     "messages": [
@@ -31,7 +31,7 @@ try:
     print(json.dumps(result, indent=2))
     
 except requests.exceptions.ConnectionError:
-    print("Error: Could not connect to server. Make sure http_bot.py is running on localhost:8000")
+    print("Error: Could not connect to server. Make sure polly_api.py is running ")
 except requests.exceptions.Timeout:
     print("Error: Request timed out")
 except Exception as e:
