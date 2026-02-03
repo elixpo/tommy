@@ -3,7 +3,7 @@
 import requests
 import json
 
-url = "http://localhost:8000/v1/chat/completions"
+url = "http://157.230.129.96:8000/v1/chat/completions"
 
 payload = {
     "messages": [

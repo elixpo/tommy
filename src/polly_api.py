@@ -8,11 +8,11 @@ from pydantic import BaseModel
 import uvicorn
 from contextlib import asynccontextmanager
 
-from src.config import config
-from src.services.pollinations import pollinations_client
-from src.logging_config import setup_logging
-from src.services.github import TOOL_HANDLERS
-from src.services.code_agent.tools import TOOL_HANDLERS as CODE_AGENT_HANDLERS
+from config import config
+from services.pollinations import pollinations_client
+from logging_config import setup_logging
+from services.github import TOOL_HANDLERS
+from services.code_agent.tools import TOOL_HANDLERS as CODE_AGENT_HANDLERS
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -134,4 +134,4 @@ async def health_check():
 
 if __name__ == "__main__":
     logger.info("Starting Polly API...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8003, log_level="info")
