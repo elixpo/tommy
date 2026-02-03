@@ -1,0 +1,42 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Manual trigger
+    inputs:
+      use_rebase:
+        description: 'Use git rebase instead of merge'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            cd ~/Polly
+            git fetch origin
+            git checkout main
+            
+            # Use rebase if requested, otherwise normal pull
+            if [ "${{ github.event.inputs.use_rebase }}" = "true" ]; then
+              echo "🔄 Using git rebase..."
+              git rebase origin/main
+            else
+              echo "🔄 Using git pull..."
+              git pull origin main
+            fi
+            
+            source venv/bin/activate
+            pip install -r requirements.txt --quiet
+            sudo systemctl restart polly
+            echo "✅ Deployed from main successfully!"
