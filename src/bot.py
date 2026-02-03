@@ -1185,10 +1185,10 @@ async def handle_inline_polly_mention(message: discord.Message):
     Handle casual "polly" mention - inline, focused, human-like reply.
 
     Key differences from @polly:
-    - NO channel history (only current message)
-    - Concise, direct responses
+    - Has channel history for CONTEXT (like a human reading chat)
+    - But ONLY replies to current message (not whole convo)
+    - Concise, direct responses (1-3 sentences)
     - Human-like tone, not verbose
-    - On-demand quick answers
     """
     # Extract text and media
     text = message.content.strip()
@@ -1196,6 +1196,26 @@ async def handle_inline_polly_mention(message: discord.Message):
 
     if not text and (image_urls or video_urls or file_urls):
         text = "[User mentioned polly with media/files - respond briefly and naturally]"
+
+    # Fetch recent channel history for CONTEXT (last 20 messages - lighter than @polly)
+    channel_history = []
+    try:
+        async for msg in message.channel.history(limit=21):  # +1 to skip current
+            if msg.id == message.id:
+                continue  # Skip current message
+
+            if msg.author.bot:
+                channel_history.append({"role": "assistant", "content": msg.content})
+            else:
+                channel_history.append({
+                    "role": "user",
+                    "content": f"[{msg.author.name}]: {msg.content}"
+                })
+
+        # Reverse to chronological order (oldest to newest)
+        channel_history.reverse()
+    except Exception as e:
+        logger.warning(f"Failed to fetch channel history for inline mention: {e}")
 
     # Check if user is admin
     user_is_admin = is_admin(message.author)
@@ -1221,24 +1241,28 @@ async def handle_inline_polly_mention(message: discord.Message):
 
     async with message.channel.typing():
         try:
-            # Add system instruction for concise, human responses
+            # Add system instruction for concise, human responses WITH CONTEXT
             inline_system_prompt = {
                 "role": "system",
                 "content": (
                     "You are Polly responding to a quick inline mention. "
+                    "You can see the recent chat history for CONTEXT, but ONLY reply to the CURRENT message. "
                     "Be CONCISE, HUMAN, and FOCUSED. "
-                    "Reply directly to THIS message only - no long explanations. "
                     "Keep it short (1-3 sentences max). "
-                    "Sound natural and conversational, not like an assistant. "
+                    "Sound natural and conversational, like a human jumping into chat. "
+                    "Don't recap the whole conversation - just answer THIS message directly. "
                     "If they need more detail, suggest using @polly for a thread."
                 )
             }
 
-            # Process with tools but NO history, just current message
+            # Build history with system prompt
+            full_history = [inline_system_prompt] + channel_history
+
+            # Process with tools AND history for context
             result = await pollinations_client.process_with_tools(
                 user_message=text,
                 discord_username=str(message.author),
-                thread_history=[inline_system_prompt],  # Only system prompt, no history
+                thread_history=full_history,  # System prompt + channel history for context
                 image_urls=image_urls,
                 video_urls=video_urls or [],
                 file_urls=file_urls or [],
