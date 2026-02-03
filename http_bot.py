@@ -6,47 +6,21 @@ from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
+from contextlib import asynccontextmanager
 
 from src.config import config
 from src.services.pollinations import pollinations_client
 from src.logging_config import setup_logging
+from src.services.github import TOOL_HANDLERS
+from src.services.code_agent.tools import TOOL_HANDLERS as CODE_AGENT_HANDLERS
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Polly API", description="OpenAI-compatible API for Polly bot")
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-class ChatRequest(BaseModel):
-    messages: List[Message]
-    system: Optional[str] = "You are Polly, a helpful assistant integrated with GitHub and code development tools. You have access to tools for creating and managing GitHub issues, searching code, running tasks, web search, and more."
-    temperature: Optional[float] = 0.7
-    max_tokens: Optional[int] = None
-
-class ChatResponse(BaseModel):
-    content: str
-    stop_reason: str
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     logger.info("Polly API starting...")
     config.validate()
-    
-    for name, handler in get_tool_handlers().items():
-        pollinations_client.register_tool_handler(name, handler)
-    logger.info(f"Registered {len(get_tool_handlers())} tool handlers")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Polly API shutting down...")
-    await pollinations_client.close()
-
-def get_tool_handlers():
-    from src.services.github import TOOL_HANDLERS
-    from src.services.code_agent.tools import TOOL_HANDLERS as CODE_AGENT_HANDLERS
     
     handlers = dict(TOOL_HANDLERS)
     handlers.update(CODE_AGENT_HANDLERS)
@@ -65,24 +39,63 @@ def get_tool_handlers():
     from src.services.discord_search import tool_discord_search
     handlers["discord_search"] = tool_discord_search
     
-    return handlers
+    for name, handler in handlers.items():
+        pollinations_client.register_tool_handler(name, handler)
+    logger.info(f"Registered {len(handlers)} tool handlers")
+    
+    yield
+    
+    logger.info("Polly API shutting down...")
+    await pollinations_client.close()
+
+app = FastAPI(title="Polly API", description="OpenAI-compatible API for Polly bot", lifespan=lifespan)
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[Message]
+    user_name: Optional[str] = "http_user"
+    image_urls: Optional[List[str]] = None
+    video_urls: Optional[List[str]] = None
+    file_urls: Optional[List[str]] = None
+    is_admin: Optional[bool] = False
+
+class ChatResponse(BaseModel):
+    content: str
+    tool_calls: Optional[List] = None
 
 @app.post("/v1/chat/completions", response_model=ChatResponse)
 async def chat_completions(request: ChatRequest) -> ChatResponse:
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    thread_history = None
+    
+    if len(request.messages) > 1:
+        thread_history = [{"role": m.role, "content": m.content} for m in request.messages[:-1]]
+    
+    user_message = request.messages[-1].content if request.messages else ""
     
     try:
-        response = await pollinations_client.process_with_tools(
-            messages=messages,
-            system_prompt=request.system,
+        result = await pollinations_client.process_with_tools(
+            user_message=user_message,
+            discord_username=request.user_name,
+            thread_history=thread_history,
+            image_urls=request.image_urls or [],
+            video_urls=request.video_urls or [],
+            file_urls=request.file_urls or [],
+            is_admin=request.is_admin or False,
+            tool_context={
+                "is_admin": request.is_admin or False,
+                "user_name": request.user_name,
+            }
         )
         
         return ChatResponse(
-            content=response,
-            stop_reason="end_turn"
+            content=result.get("response", ""),
+            tool_calls=result.get("tool_calls", [])
         )
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        logger.error(f"Error processing message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 @app.get("/health")
