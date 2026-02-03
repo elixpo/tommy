@@ -1228,11 +1228,14 @@ async def handle_inline_polly_mention(message: discord.Message):
             inline_system_prompt = {
                 "role": "system",
                 "content": (
-                    "You are Polly responding inline. Be SUPER SHORT (max 15-20 words). "
-                    "Answer like texting - casual, direct, no fluff. "
-                    "Example: 'Doc search is empty, might be rebuilding. Want me to scrape the site?' "
-                    "NOT: Multiple sentences with emojis explaining everything. "
-                    "For details, say '@polly for more'."
+                    "You are Polly responding inline. Be EXTREMELY SHORT. "
+                    "Ideal: 1-5 WORDS. Max: 1 sentence if absolutely necessary. "
+                    "Examples of GOOD responses: "
+                    "'yep works fine' / 'nope, down' / 'try gen.pollinations.ai' / 'doc search empty' "
+                    "Examples of BAD responses: "
+                    "'It seems the doc search is running but empty...' (TOO LONG) "
+                    "Talk like texting a friend - minimal words, maximum info. "
+                    "For anything complex, say '@polly for details'."
                 )
             }
 
