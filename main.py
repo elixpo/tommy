@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-Polly Helper Bot - Discord bot for creating GitHub issues.
-
-When @mentioned with an issue description, the bot uses AI to parse and enhance
-the description, then creates a well-formatted GitHub issue.
-"""
-
 import logging
 import sys
 
@@ -17,14 +9,10 @@ from src.bot import bot
 
 
 def main():
-    """Entry point for the bot."""
-    # Setup clean logging
     setup_logging(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
     logger.info("Starting Polly Helper Bot...")
-
-    # Validate configuration before starting
     config.validate()
 
     try:
