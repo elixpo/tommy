@@ -10,7 +10,6 @@ Architecture:
 
 The sandbox is persistent (24/7) and survives bot restarts.
 """
-
 import asyncio
 import logging
 import re
@@ -31,23 +30,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TodoItem:
-    """A todo item extracted from Claude Code output."""
     content: str
-    status: str = "pending"  # pending, in_progress, completed
+    status: str = "pending"
 
 
 def parse_todos_from_output(output: str) -> List[TodoItem]:
-    """
-    Parse todo items from Claude Code output.
-
-    Claude Code outputs todos in various formats:
-    - [ ] Pending task
-    -  In progress task
-    -  Completed task
-    - [ ] Unchecked
-    - [x] Checked
-    - "- task name" in todo lists
-    """
     todos = []
     seen = set()
 
@@ -61,7 +48,6 @@ def parse_todos_from_output(output: str) -> List[TodoItem]:
         status = "pending"
         content = None
 
-        # Check for emoji-based todos
         if line.startswith('⬜') or line.startswith('◻'):
             content = line[1:].strip().lstrip('- ').strip()
             status = "pending"
@@ -74,14 +60,12 @@ def parse_todos_from_output(output: str) -> List[TodoItem]:
         elif line.startswith('❌'):
             content = line[1:].strip().lstrip('- ').strip()
             status = "failed"
-        # Check for markdown checkbox todos
         elif line.startswith('- [ ]') or line.startswith('* [ ]'):
             content = line[5:].strip()
             status = "pending"
         elif line.startswith('- [x]') or line.startswith('* [x]') or line.startswith('- [X]'):
             content = line[5:].strip()
             status = "completed"
-        # Check for numbered todos like "1. [in_progress] Fix bug"
         elif re.match(r'^\d+\.\s*\[(pending|in_progress|completed)\]', line):
             match = re.match(r'^\d+\.\s*\[(pending|in_progress|completed)\]\s*(.+)', line)
             if match:
@@ -89,7 +73,6 @@ def parse_todos_from_output(output: str) -> List[TodoItem]:
                 content = match.group(2).strip()
 
         if content and len(content) > 2 and content not in seen:
-            # Skip generic/noisy items and heartbeat messages
             skip_patterns = [
                 'token', 'cost', 'session', 'api', 'model',
                 'working on the task', 'analyzing code', 'thinking',
@@ -99,15 +82,13 @@ def parse_todos_from_output(output: str) -> List[TodoItem]:
                 seen.add(content)
                 todos.append(TodoItem(content=content[:100], status=status))
 
-    return todos[:10]  # Limit to 10 todos
+    return todos[:10]
 
 
-# Callback types
 ProgressCallback = Callable[[str], Awaitable[None]]
 
 
 class AgentStatus(Enum):
-    """Current status of the Claude Code agent."""
     INITIALIZING = "initializing"
     SETTING_UP = "setting_up"
     WORKING = "working"
@@ -118,18 +99,13 @@ class AgentStatus(Enum):
 
 @dataclass
 class ClaudeCodeConfig:
-    """Configuration for Claude Code agent."""
-    # Timeouts (None = no timeout)
-    setup_timeout: int = 300  # 5 min for initial setup only
-    task_timeout: Optional[int] = None  # No timeout for tasks
-
-    # Heartbeat interval for progress updates
-    heartbeat_interval: int = 30  # seconds
+    setup_timeout: int = 300
+    task_timeout: Optional[int] = None
+    heartbeat_interval: int = 30
 
 
 @dataclass
 class TaskProgress:
-    """Progress information for a task."""
     status: AgentStatus = AgentStatus.INITIALIZING
     current_step: str = ""
     steps_completed: list = field(default_factory=list)
@@ -144,7 +120,6 @@ class TaskProgress:
 
 @dataclass
 class ClaudeCodeResult:
-    """Result from Claude Code execution."""
     success: bool
     output: str
     files_changed: list = field(default_factory=list)
@@ -155,21 +130,6 @@ class ClaudeCodeResult:
 
 
 class ClaudeCodeAgent:
-    """
-    Agent that uses Claude Code CLI for coding tasks.
-
-    Uses persistent sandbox with branch-based task isolation.
-    Bot AI handles all git operations (push, PR, etc.) after ccr completes.
-
-    Usage:
-        agent = ClaudeCodeAgent()
-        result = await agent.run_task(
-            user_id="user123",
-            prompt="Fix the URL encoding bug in getImageURL.js",
-            on_progress=update_discord_embed
-        )
-    """
-
     def __init__(self, config: Optional[ClaudeCodeConfig] = None):
         self.config = config or ClaudeCodeConfig()
         self._sandbox: Optional[PersistentSandbox] = None
@@ -177,11 +137,9 @@ class ClaudeCodeAgent:
         self._active_branches: dict[str, TaskBranch] = {}
 
     async def _get_sandbox(self) -> PersistentSandbox:
-        """Get the persistent sandbox, ensuring it's running."""
         if self._sandbox is None:
             self._sandbox = get_persistent_sandbox()
 
-        # Ensure sandbox is running
         if not await self._sandbox.is_running():
             await self._sandbox.ensure_running()
             await self._sandbox.sync_repo()
@@ -194,34 +152,14 @@ class ClaudeCodeAgent:
         prompt: str,
         task_description: str = "",
         on_progress: Optional[ProgressCallback] = None,
-        thread_id: Optional[int] = None,  # Discord thread ID - universal key
-        discord_user_id: Optional[int] = None,  # Discord user ID (numeric) for terminal ownership
-        discord_channel_id: Optional[int] = None,  # Discord channel ID for notifications
+        thread_id: Optional[int] = None,
+        discord_user_id: Optional[int] = None,
+        discord_channel_id: Optional[int] = None,
     ) -> ClaudeCodeResult:
-        """
-        Run a coding task using Claude Code.
-
-        Args:
-            user_id: ID of the user requesting the task (string, for git)
-            prompt: The task prompt for Claude Code
-            task_description: Human-readable description for the task
-            on_progress: Callback for progress updates
-            thread_id: Discord thread ID - if provided, used as:
-                       - task_id (for tracking)
-                       - branch name (thread/{thread_id})
-                       Note: ccr sessions are managed internally by ccr and may
-                       auto-compact. Git branch is the true source of state.
-            discord_user_id: Discord user ID (numeric) - owner of the terminal session
-            discord_channel_id: Discord channel ID for stale terminal notifications
-
-        Returns:
-            ClaudeCodeResult with output and metadata
-        """
         task_id = None
         branch = None
 
         try:
-            # Initialize progress tracking
             progress = TaskProgress(
                 status=AgentStatus.SETTING_UP,
                 current_step="Setting up sandbox",
@@ -231,14 +169,12 @@ class ClaudeCodeAgent:
             if on_progress:
                 await on_progress("🔧 Setting up coding environment...")
 
-            # Get sandbox
             sandbox = await self._get_sandbox()
 
-            # Create task branch (uses thread_id as universal key if provided)
             branch = await sandbox.create_task_branch(
                 user_id=user_id,
                 task_description=task_description or prompt[:100],
-                thread_id=thread_id,  # Pass thread_id for universal key
+                thread_id=thread_id,
             )
             task_id = branch.task_id
 
@@ -254,7 +190,6 @@ class ClaudeCodeAgent:
 
             logger.info(f"Running ccr task {task_id} for user {user_id}: {prompt[:100]}...")
 
-            # Execute with heartbeat
             result = await self._execute_with_heartbeat(
                 sandbox,
                 branch,
@@ -266,12 +201,10 @@ class ClaudeCodeAgent:
 
             progress.steps_completed.append("Run task")
 
-            # Log result
             logger.info(f"ccr task {task_id} exit_code={result.exit_code}, output_len={len(result.stdout)}")
             if result.stderr:
                 logger.warning(f"ccr stderr: {result.stderr[:500]}")
 
-            # Collect metadata
             progress.current_step = "Collecting results"
 
             files_changed = await sandbox.get_branch_files_changed(branch)
@@ -317,11 +250,6 @@ class ClaudeCodeAgent:
         discord_user_id: Optional[int] = None,
         discord_channel_id: Optional[int] = None,
     ) -> CommandResult:
-        """
-        Execute ccr with heartbeat progress updates.
-
-        Sends periodic updates so Discord embed shows activity.
-        """
         heartbeat_messages = [
             "⏳ Working on the task...",
             "🔍 Analyzing code...",
@@ -337,7 +265,6 @@ class ClaudeCodeAgent:
         start_time = loop.time()
 
         async def heartbeat_loop():
-            """Send periodic progress updates while ccr runs."""
             nonlocal heartbeat_idx
             while True:
                 await asyncio.sleep(self.config.heartbeat_interval)
@@ -349,11 +276,9 @@ class ClaudeCodeAgent:
                     heartbeat_idx += 1
 
         try:
-            # Start heartbeat task if we have a progress callback
             if on_progress:
                 heartbeat_task = asyncio.create_task(heartbeat_loop())
 
-            # Execute ccr (pass Discord IDs for terminal ownership tracking)
             result = await sandbox.run_ccr(
                 branch, prompt,
                 discord_user_id=discord_user_id or 0,
@@ -361,7 +286,6 @@ class ClaudeCodeAgent:
             )
 
         finally:
-            # Cancel heartbeat when done
             if heartbeat_task:
                 heartbeat_task.cancel()
                 try:
@@ -369,7 +293,6 @@ class ClaudeCodeAgent:
                 except asyncio.CancelledError:
                     pass
 
-        # Send final output snippets
         if on_progress and result.stdout:
             lines = result.stdout.split('\n')
             for line in lines[-10:]:
@@ -382,7 +305,6 @@ class ClaudeCodeAgent:
         return result
 
     async def get_branch_diff(self, task_id: str) -> str:
-        """Get the git diff for a task."""
         branch = self._active_branches.get(task_id)
         if not branch:
             return ""
@@ -391,7 +313,6 @@ class ClaudeCodeAgent:
         return await sandbox.get_branch_diff(branch)
 
     async def get_files_changed(self, task_id: str) -> list[str]:
-        """Get list of files changed for a task."""
         branch = self._active_branches.get(task_id)
         if not branch:
             return []
@@ -405,11 +326,6 @@ class ClaudeCodeAgent:
         prompt: str,
         on_progress: Optional[ProgressCallback] = None,
     ) -> ClaudeCodeResult:
-        """
-        Continue a task with additional instructions.
-
-        Uses the same branch as the original task.
-        """
         branch = self._active_branches.get(task_id)
         if not branch:
             return ClaudeCodeResult(
@@ -446,7 +362,6 @@ class ClaudeCodeAgent:
         )
 
     async def cleanup_task(self, task_id: str):
-        """Clean up a task (delete branch)."""
         branch = self._active_branches.pop(task_id, None)
         self._progress.pop(task_id, None)
 
@@ -456,7 +371,6 @@ class ClaudeCodeAgent:
             logger.info(f"Cleaned up task {task_id}")
 
     async def list_active_tasks(self) -> list[dict]:
-        """List all active tasks."""
         return [
             {
                 "task_id": branch.task_id,
@@ -469,31 +383,23 @@ class ClaudeCodeAgent:
         ]
 
     def get_progress(self, task_id: str) -> Optional[TaskProgress]:
-        """Get current progress for a task."""
         return self._progress.get(task_id)
 
-
-# =============================================================================
-# GLOBAL INSTANCE
-# =============================================================================
 
 _claude_code_agent: Optional[ClaudeCodeAgent] = None
 
 
 def get_claude_code_agent() -> ClaudeCodeAgent:
-    """Get or create the global Claude Code agent instance."""
     global _claude_code_agent
     if _claude_code_agent is None:
         _claude_code_agent = ClaudeCodeAgent()
     return _claude_code_agent
 
 
-# Backward compatibility alias
-claude_code_agent = None  # Will be lazily initialized
+claude_code_agent = None
 
 
 class _LazyClaudeCodeAgent:
-    """Lazy proxy for claude_code_agent."""
     def __getattr__(self, name):
         return getattr(get_claude_code_agent(), name)
 
