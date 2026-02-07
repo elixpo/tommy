@@ -1,15 +1,15 @@
 {
   "bot": {
-    "name": "Polly",
-    "default_repo": "pollinations/pollinations"
+    "name": "gitcord",
+    "default_repo": "elixpo/elixpo_chapter"
   },
   "discord": {
-    "admin_role_ids": [911279121307414558, 1340339234065744006]
+    "admin_role_ids": ["roleid1", "roleid2"]
   },
   "github": {
-    "bot_username": "polly-bot-pollinations-ai",
-    "admin_users": ["voodoohop", "Itachi-1824", "eulervoid", "ElliotEtag", "Circuit-Overtime"],
-    "whitelisted_repos": ["pollinations/pollinations"],
+    "bot_username": "gitcord-bot",
+    "admin_users": ["admin_github_username1", "admin_github_username2"],
+    "whitelisted_repos": ["elixpo/elixpo_chapter"],
     "admin_only_mentions": true
   },
   "webhook": {
@@ -23,7 +23,7 @@
   "features": {
     "sandbox_enabled": true,
     "local_embeddings_enabled": true,
-    "embeddings_repo": "pollinations/pollinations",
+    "embeddings_repo": "elixpo/elixpo_chapter",
     "doc_embeddings_enabled": true,
     "doc_sites": [
       "https://enter.pollinations.ai",
