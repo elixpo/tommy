@@ -6,10 +6,8 @@ import io
 import logging
 import re
 from typing import Optional, Union
-
 import discord
 from discord.ext import commands, tasks
-
 from .config import config
 from .context import session_manager, ConversationSession
 from .services.github import github_manager, TOOL_HANDLERS
@@ -23,10 +21,6 @@ from .services.code_agent.sandbox import get_persistent_sandbox
 from .services.webhook_server import start_webhook_server, stop_webhook_server
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# PR MERGE NOTIFICATION (triggers embedding updates)
-# =============================================================================
 PR_MERGE_CHANNEL_ID = 1433858964658852081
 PR_MERGE_WEBHOOK_ID = 1433141915397652532
 
