@@ -328,7 +328,7 @@ GITHUB_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "polly_agent",
+            "name": "meaw_agent",
             "description": "",
             "parameters": {
                 "type": "object",
@@ -791,7 +791,7 @@ def filter_admin_actions_from_tools(tools: list, is_admin: bool) -> list:
     for tool in tools:
         tool_name = tool.get("function", {}).get("name", "")
 
-        if tool_name == "polly_agent":
+        if tool_name == "meaw_agent":
             continue
 
         if tool_name not in ADMIN_ACTIONS:
@@ -842,7 +842,7 @@ TOOL_KEYWORDS = {
         r"\b(projects?\s*(board)?|boards?|kanban|sprint|columns?|todo|in\s*progress|done|backlog)\b",
         re.IGNORECASE,
     ),
-    "polly_agent": re.compile(
+    "meaw_agent": re.compile(
         r"\b(implement\w*|refactor\w*|coding\s*agent|"
         r"write\s+(the\s+)?(code|function|class|method)|"
         r"edit\s+(the\s+)?(code|file)|modify\s+(the\s+)?(code|file)|"
@@ -892,7 +892,7 @@ def filter_tools_by_intent(
 
     AI_CONTROLLED_TOOLS = {"web_search", "code_search", "discord_search"}
     if is_admin:
-        AI_CONTROLLED_TOOLS.add("polly_agent")
+        AI_CONTROLLED_TOOLS.add("meaw_agent")
 
     filtered = [
         tool
@@ -904,9 +904,9 @@ def filter_tools_by_intent(
     return filtered if filtered else all_tools
 
 TOOL_SYSTEM_PROMPT = ""
-ADMIN_TOOLS_SECTION = "- `github_overview` - Repo summary (issues, labels, milestones, projects)\n- `github_issue` - Issues: get, search, create, comment, close, label, assign\n- `github_pr` - PRs: get, list, review, approve, merge, inline comments\n- `github_project` - Projects V2: list, view, add items, set status\n- `polly_agent` - **Code agent** (implement, edit code, create branches, PRs)\n- `github_custom` - Raw data (commits, history, stats)\n- `web_search` - Web search with reasoning (Perplexity)\n- `web_scrape` - Full Crawl4AI: scrape, extract, css_extract (fast!), semantic, regex, fetch_file (Discord attachments)\n- `code_search` - Semantic code search\n- `doc_search` - Documentation search (enter.pollinations.ai, kpi.myceli.ai, gsoc.pollinations.ai)\n- `discord_search` - Search Discord server (messages, members, channels, threads, roles)"
+ADMIN_TOOLS_SECTION = "- `github_overview` - Repo summary (issues, labels, milestones, projects)\n- `github_issue` - Issues: get, search, create, comment, close, label, assign\n- `github_pr` - PRs: get, list, review, approve, merge, inline comments\n- `github_project` - Projects V2: list, view, add items, set status\n- `meaw_agent` - **Code agent** (implement, edit code, create branches, PRs)\n- `github_custom` - Raw data (commits, history, stats)\n- `web_search` - Web search with reasoning (Perplexity)\n- `web_scrape` - Full Crawl4AI: scrape, extract, css_extract (fast!), semantic, regex, fetch_file (Discord attachments)\n- `code_search` - Semantic code search\n- `doc_search` - Documentation search (enter.pollinations.ai, kpi.myceli.ai, gsoc.pollinations.ai)\n- `discord_search` - Search Discord server (messages, members, channels, threads, roles)"
 NON_ADMIN_TOOLS_SECTION = "- `github_overview` - Repo summary (issues, labels, milestones, projects)\n- `github_issue` - Issues: get, search, create, comment (read + create only)\n- `github_pr` - PRs: get, list, comment (read-only)\n- `github_project` - Projects V2: list, view (read-only)\n- `github_custom` - Raw data (commits, history, stats)\n- `web_search` - Web search with reasoning (Perplexity)\n- `web_scrape` - Full Crawl4AI: scrape, extract, css_extract (fast!), semantic, regex, fetch_file (Discord attachments)\n- `code_search` - Semantic code search\n- `doc_search` - Documentation search (enter.pollinations.ai, kpi.myceli.ai, gsoc.pollinations.ai)\n- `discord_search` - Search Discord server (messages, members, channels, threads, roles)"
-POLLY_AGENT_SECTION = ""
+meaw_AGENT_SECTION = ""
 
 def get_tool_system_prompt(is_admin: bool = True) -> str:
     from datetime import datetime, timezone
@@ -915,23 +915,23 @@ def get_tool_system_prompt(is_admin: bool = True) -> str:
 
     if is_admin:
         tools_section = ADMIN_TOOLS_SECTION
-        polly_agent_section = POLLY_AGENT_SECTION
+        meaw_agent_section = meaw_AGENT_SECTION
     else:
         tools_section = NON_ADMIN_TOOLS_SECTION
-        polly_agent_section = ""
+        meaw_agent_section = ""
 
     return TOOL_SYSTEM_PROMPT.format(
         repo_info=REPO_INFO,
         current_utc=current_utc,
         tools_section=tools_section,
-        polly_agent_section=polly_agent_section,
+        meaw_agent_section=meaw_agent_section,
     )
 
 TOOL_SYSTEM_PROMPT_STATIC = TOOL_SYSTEM_PROMPT.format(
     repo_info=REPO_INFO,
     current_utc="[dynamic]",
     tools_section=ADMIN_TOOLS_SECTION,
-    polly_agent_section=POLLY_AGENT_SECTION,
+    meaw_agent_section=meaw_AGENT_SECTION,
 )
 
 CONVERSATION_SYSTEM_PROMPT = BRIDGE_SYSTEM_PROMPT

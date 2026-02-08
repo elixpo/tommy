@@ -912,7 +912,7 @@ async def on_message(message: discord.Message):
 
     # Check reply status ONCE (reuse result throughout)
     is_reply_to_bot, ref_msg = await _check_reply_to_bot(message)
-    logger.info(f"MSG: '{message.content[:50]}' | is_reply_to_bot={is_reply_to_bot} | has_polly={'polly' in message.content.lower()} | is_@mention={bot.user and bot.user.mentioned_in(message) if bot.user else False} | in_thread={isinstance(message.channel, discord.Thread)}")
+    logger.info(f"MSG: '{message.content[:50]}' | is_reply_to_bot={is_reply_to_bot} | has_polly={'meaw' in message.content.lower()} | is_@mention={bot.user and bot.user.mentioned_in(message) if bot.user else False} | in_thread={isinstance(message.channel, discord.Thread)}")
 
     # Check if in a thread
     if isinstance(message.channel, discord.Thread):
@@ -932,7 +932,7 @@ async def on_message(message: discord.Message):
         # Check if this is an auto-created thread from inline reply (no session exists)
         # If so, treat it as inline and don't persist the thread
         if not session and is_reply_to_bot and not bot.user.mentioned_in(message):
-            # This is a reply to inline polly in an auto-created thread
+            # This is a reply to inline meaw in an auto-created thread
             # Respond inline-style without creating session
             await handle_inline_polly_mention(message)
             return
@@ -971,14 +971,14 @@ async def on_message(message: discord.Message):
         await handle_thread_message(message, session)
         return
 
-    # Check for casual "polly" mention OR reply to bot (case-insensitive)
+    # Check for casual "meaw" mention OR reply to bot (case-insensitive)
     # This triggers inline reply WITHOUT creating a thread
-    # if "polly" in message.content.lower():
+    # if "meaw" in message.content.lower():
     #     await handle_inline_polly_mention(message)
     #     return
 
     # ONLY respond if @mentioned (not just replying)
-    # Thread creation is ONLY for @polly, not replies
+    # Thread creation is ONLY for @meaw, not replies
     if bot.user is None or not bot.user.mentioned_in(message):
         logger.info(f"Ignoring message (not @mentioned): {message.content[:50]}")
         return
@@ -1006,7 +1006,7 @@ async def on_message(message: discord.Message):
         text = "[User attached media/files]"
 
     # Create thread and start new conversation
-    logger.info(f"PATH: CREATING THREAD (line 1020) - This should ONLY happen for @polly!")
+    logger.info(f"PATH: CREATING THREAD (line 1020) - This should ONLY happen for @meaw!")
     await start_conversation(message, text, image_urls, video_urls, file_urls)
 
 
@@ -1159,9 +1159,9 @@ async def start_conversation(
 
 async def handle_inline_polly_mention(message: discord.Message):
     """
-    Handle casual "polly" mention - inline, focused, human-like reply.
+    Handle casual "meaw" mention - inline, focused, human-like reply.
 
-    Key differences from @polly:
+    Key differences from @meaw:
     - Has channel history for CONTEXT (like a human reading chat)
     - But ONLY replies to current message (not whole convo)
     - Concise, direct responses (1-3 sentences)
@@ -1172,9 +1172,9 @@ async def handle_inline_polly_mention(message: discord.Message):
     image_urls, video_urls, file_urls = extract_media_urls(message)
 
     if not text and (image_urls or video_urls or file_urls):
-        text = "[User mentioned polly with media/files - respond briefly and naturally]"
+        text = "[User mentioned meaw with media/files - respond briefly and naturally]"
 
-    # Fetch recent channel history for CONTEXT (last 20 messages - lighter than @polly)
+    # Fetch recent channel history for CONTEXT (last 20 messages - lighter than @meaw)
     channel_history = []
     try:
         async for msg in message.channel.history(limit=21):  # +1 to skip current
@@ -1222,14 +1222,14 @@ async def handle_inline_polly_mention(message: discord.Message):
             inline_system_prompt = {
                 "role": "system",
                 "content": (
-                    "You are Polly responding inline. Be EXTREMELY SHORT. "
+                    "You are meaw responding inline. Be EXTREMELY SHORT. "
                     "Ideal: 1-5 WORDS. Max: 1 sentence if absolutely necessary. "
                     "Examples of GOOD responses: "
                     "'yep works fine' / 'nope, down' / 'try gen.pollinations.ai' / 'doc search empty' "
                     "Examples of BAD responses: "
                     "'It seems the doc search is running but empty...' (TOO LONG) "
                     "Talk like texting a friend - minimal words, maximum info. "
-                    "For anything complex, say '@polly for details'."
+                    "For anything complex, say '@meaw for details'."
                 )
             }
 
@@ -1272,7 +1272,7 @@ async def handle_inline_polly_mention(message: discord.Message):
                     mention_author=False,
                 )
         except Exception as e:
-            logger.error(f"Error processing inline polly mention: {e}")
+            logger.error(f"Error processing inline meaw mention: {e}")
             await message.reply("Sorry, I encountered an error processing your request.", mention_author=False)
 
 
@@ -1478,7 +1478,7 @@ async def process_message(
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are Polly. The user sent a message but you didn't respond. Generate a helpful response - ask clarifying questions if you're unsure what they want, or summarize what you found if you used tools.",
+                        "content": "You are meaw. The user sent a message but you didn't respond. Generate a helpful response - ask clarifying questions if you're unsure what they want, or summarize what you found if you used tools.",
                     },
                     {"role": "user", "content": text},
                 ],

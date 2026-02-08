@@ -33,7 +33,7 @@ class Config:
         cfg = load_config_json()
 
         bot_cfg = cfg.get("bot", {})
-        self.bot_name = bot_cfg.get("name", "Polly")
+        self.bot_name = bot_cfg.get("name", "meaw")
         self.default_repo = bot_cfg.get("default_repo", "pollinations/pollinations")
 
         discord_cfg = cfg.get("discord", {})

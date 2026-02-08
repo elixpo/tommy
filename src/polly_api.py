@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Polly API starting...")
+    logger.info("meaw API starting...")
     config.validate()
     
     handlers = dict(TOOL_HANDLERS)
@@ -44,10 +44,10 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    logger.info("Polly API shutting down...")
+    logger.info("meaw API shutting down...")
     await pollinations_client.close()
 
-app = FastAPI(title="Polly API", description="OpenAI-compatible API for Polly bot", lifespan=lifespan)
+app = FastAPI(title="meaw API", description="OpenAI-compatible API for meaw bot", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,7 +102,7 @@ You are running in HTTP API mode. You have LIMITED tool access:
 - Issue creation/management
 - Code execution/sandbox
 - GitHub PR operations
-- Polly agent tasks
+- meaw agent tasks
 - Discord search
 
 If user requests restricted operations, politely explain they need to use the Discord bot directly."""
@@ -144,5 +144,5 @@ async def health_check():
     }
 
 if __name__ == "__main__":
-    logger.info("Starting Polly API...")
-    uvicorn.run("src.polly_api:app", host="0.0.0.0", port=8003, log_level="info")
+    logger.info("Starting meaw API...")
+    uvicorn.run("src.meaw_api:app", host="0.0.0.0", port=8003, log_level="info")

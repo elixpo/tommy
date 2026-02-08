@@ -420,11 +420,11 @@ class PersistentSandbox:
 
         await self.execute("touch /tmp/claude-code-reference-count.txt && chmod 666 /tmp/claude-code-reference-count.txt")
 
-        await self.execute("git config --global user.email 'polly@pollinations.ai'")
-        await self.execute("git config --global user.name 'Polly Bot'")
+        await self.execute("git config --global user.email 'meaw@pollinations.ai'")
+        await self.execute("git config --global user.name 'meaw Bot'")
         await self.execute("git config --global --add safe.directory '*'")
-        await self.execute("su - coder -c \"git config --global user.email 'polly@pollinations.ai'\"")
-        await self.execute("su - coder -c \"git config --global user.name 'Polly Bot'\"")
+        await self.execute("su - coder -c \"git config --global user.email 'meaw@pollinations.ai'\"")
+        await self.execute("su - coder -c \"git config --global user.name 'meaw Bot'\"")
         await self.execute("su - coder -c \"git config --global --add safe.directory '*'\"")
 
         await self._setup_commit_hook()
@@ -859,19 +859,19 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
 echo "username=x-access-token"
 echo "password=$GH_TOKEN"
 '''
-            helper_path = SANDBOX_DIR / "git-credential-polly"
+            helper_path = SANDBOX_DIR / "git-credential-meaw"
             helper_path.write_text(credential_script)
 
             await self._run_host_command([
                 "docker", "cp",
                 str(helper_path),
-                f"{CONTAINER_NAME}:/usr/local/bin/git-credential-polly"
+                f"{CONTAINER_NAME}:/usr/local/bin/git-credential-meaw"
             ])
 
-            await self.execute("chmod +x /usr/local/bin/git-credential-polly")
+            await self.execute("chmod +x /usr/local/bin/git-credential-meaw")
 
             await self.execute(
-                "cd /workspace/pollinations && git config credential.helper '/usr/local/bin/git-credential-polly'",
+                "cd /workspace/pollinations && git config credential.helper '/usr/local/bin/git-credential-meaw'",
                 as_coder=True
             )
 

@@ -3,7 +3,7 @@ GitHub Code tool handler for Discord bot integration.
 
 Architecture:
 - Bot AI handles user intent and conversation
-- Polly handles ALL code operations (read, edit, test, git, commits)
+- meaw handles ALL code operations (read, edit, test, git, commits)
 - Single Discord embed updates in real-time (no message spam)
 - Terminal-per-thread for concurrent tasks
 - Sandbox stays alive for follow-up commands
@@ -214,7 +214,7 @@ def _build_interaction_summary(
 
     return summary
 
-async def tool_polly_agent(
+async def tool_meaw_agent(
     action: str,
     task: Optional[str] = None,
     repo: str = "pollinations/pollinations",
@@ -250,14 +250,14 @@ async def tool_polly_agent(
 
     if not is_admin:
         logger.warning(
-            f"SECURITY: Blocked polly_agent access for non-admin user {context_user_name or discord_user_name} (id={context_user_id})"
+            f"SECURITY: Blocked meaw_agent access for non-admin user {context_user_name or discord_user_name} (id={context_user_id})"
         )
         return {
             "error": "Code agent requires admin permissions. This tool can modify repository code, create branches, and open PRs - ask a team member with admin access!"
         }
     else:
         logger.info(
-            f"Polly agent access authorized for {context_user_name or discord_user_name} (id={context_user_id})"
+            f"meaw agent access authorized for {context_user_name or discord_user_name} (id={context_user_id})"
         )
 
     if discord_thread_id and not task_id:
@@ -338,7 +338,7 @@ async def tool_polly_agent(
         }
 
     except Exception as e:
-        logger.exception("Error in polly_agent tool")
+        logger.exception("Error in meaw_agent tool")
         return {"error": str(e)}
 
 async def _handle_status(task_id: Optional[str]) -> dict:
@@ -403,7 +403,7 @@ def _handle_list_tasks() -> dict:
             "Task IDs are now Discord thread IDs - the universal key.\n"
             "When user is in a thread, thread_id is auto-injected so you don't need task_id.\n\n"
             "For PR/push from a thread (most common case):\n"
-            "- polly_agent(action='open_pr', pr_title='...', pr_body='...',\n"
+            "- meaw_agent(action='open_pr', pr_title='...', pr_body='...',\n"
             "             branch_type='feat|fix|docs', branch_description='short-description')\n\n"
             "IMPORTANT: When pushing or creating PRs, use branch_type and branch_description\n"
             "to give branches proper names like feat/xyz, fix/abc instead of thread/12345."
@@ -808,7 +808,7 @@ async def _handle_code_task(
         )
 
         session_uuid = str(
-            uuid.UUID(hashlib.md5(f"polly-{task_id}".encode()).hexdigest())
+            uuid.UUID(hashlib.md5(f"meaw-{task_id}".encode()).hexdigest())
         )
 
         if is_continuation:
@@ -952,7 +952,7 @@ async def _handle_code_task(
                 "DECISION TREE:\n"
                 "1. SUCCESS + files_changed → Summarize changes FROM agent_response, ask 'Create a PR?'\n"
                 "2. SUCCESS + no files → Report what I found/said FROM agent_response\n"
-                "3. NEEDS INFO → Use YOUR tools (code_search, github_issue) to get it, call polly_agent again\n"
+                "3. NEEDS INFO → Use YOUR tools (code_search, github_issue) to get it, call meaw_agent again\n"
                 "4. ERROR → Explain the ACTUAL error FROM agent_response\n\n"
                 "TASK IS NOT DONE until user confirms.\n\n"
                 "🔑 BRANCH NAMING: Branch is auto-generated with proper name (feat/*, fix/*, etc.)\n"
@@ -960,13 +960,13 @@ async def _handle_code_task(
                 "- Follow-ups from this thread automatically use the same branch\n"
                 "- No need to specify branch_type - it's inferred from task description\n\n"
                 "TO CREATE PR (when user confirms):\n"
-                "polly_agent(action='open_pr', pr_title='...', pr_body='...')\n"
+                "meaw_agent(action='open_pr', pr_title='...', pr_body='...')\n"
                 "Branch name is already set properly - just provide PR title and body.\n\n"
-                "TO CONTINUE WORK (follow-up task) - just call polly_agent again:\n"
-                "polly_agent(action='task', task='also add tests')\n"
+                "TO CONTINUE WORK (follow-up task) - just call meaw_agent again:\n"
+                "meaw_agent(action='task', task='also add tests')\n"
                 "The thread_id is auto-injected, so I continue on the same branch with full context.\n\n"
                 "📝 NOTES TO SELF - Save important context for later:\n"
-                "polly_agent(action='add_note', note='User prefers TypeScript', category='preference')\n"
+                "meaw_agent(action='add_note', note='User prefers TypeScript', category='preference')\n"
                 "Categories: decision, warning, todo, preference, context\n"
                 "Notes persist across calls and appear in your context automatically!"
             ),
@@ -1366,5 +1366,5 @@ async def _cleanup_task(task_id: str, delay: int):
     _running_tasks.pop(task_id, None)
 
 TOOL_HANDLERS = {
-    "polly_agent": tool_polly_agent,
+    "meaw_agent": tool_meaw_agent,
 }
