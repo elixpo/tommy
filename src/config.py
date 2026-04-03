@@ -97,6 +97,14 @@ class Config:
         self.api_port = api_cfg.get("port", 55288)
 
         # =================================================================
+        # EMBEDDINGS CONFIG
+        # =================================================================
+        embeddings_cfg = cfg.get("embeddings", {})
+        self.embeddings_provider = embeddings_cfg.get("provider", "api")  # "local" or "api"
+        self.embeddings_model = embeddings_cfg.get("model", "text-embedding-3-small")
+        self.embeddings_api_base_url = embeddings_cfg.get("api_base_url", "https://api.openai.com/v1")
+
+        # =================================================================
         # FEATURES CONFIG
         # =================================================================
         features_cfg = cfg.get("features", {})

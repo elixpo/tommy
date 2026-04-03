@@ -24,6 +24,11 @@
     "model": "kimi",
     "fallback_model": "glm"
   },
+  "embeddings": {
+    "provider": "api",
+    "model": "text-embedding-3-small",
+    "api_base_url": "https://api.openai.com/v1"
+  },
   "features": {
     "local_embeddings_enabled": true,
     "embeddings_repo": "pollinations/pollinations",

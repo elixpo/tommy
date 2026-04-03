@@ -10,14 +10,13 @@ from .._cache import TTLCache
 from .._hash import content_hash
 from .._re import re
 from .._url import join_url, parse_url
-from .embeddings_utils import validate_and_get_openai_client
+from .embeddings_utils import get_provider
 
 logger = logging.getLogger(__name__)
 
 _enc = tiktoken.get_encoding("cl100k_base")
 MAX_TOKENS_PER_INPUT = 8000
 
-_model = None
 _chroma_client = None
 _collection = None
 
@@ -37,15 +36,6 @@ MAX_CHUNK_SIZE = 1000
 MIN_CHUNK_SIZE = 100
 
 _update_lock = asyncio.Lock()
-
-
-def _get_model():
-    global _model
-    if _model is None:
-        api_key = os.getenv("OPENAI_EMBEDDINGS_API")
-        _model = validate_and_get_openai_client(api_key, service_name="doc_embeddings")
-        logger.info("OpenAI embeddings client initialized for documentation")
-    return _model
 
 
 def _get_collection():
@@ -328,7 +318,7 @@ async def _crawl_site(base_url: str, max_pages: int = MAX_PAGES_PER_SITE) -> lis
 
 
 async def embed_site(base_url: str, force_full: bool = False) -> int:
-    model = _get_model()
+    provider = get_provider()
     collection = _get_collection()
 
     pages = await _crawl_site(base_url)
@@ -430,12 +420,7 @@ async def embed_site(base_url: str, force_full: bool = False) -> int:
                     batch_metadatas.append(all_metadatas[i])
                     batch_tokens += doc_tokens
                     i += 1
-                embedding_response = await asyncio.to_thread(
-                    lambda docs=batch_docs: model.embeddings.create(
-                        model="text-embedding-3-small", input=docs, dimensions=1536
-                    )
-                )
-                batch_embeddings = [item.embedding for item in embedding_response.data]
+                batch_embeddings = await provider.embed(batch_docs)
                 collection.upsert(
                     ids=batch_ids,
                     embeddings=batch_embeddings,
@@ -465,16 +450,13 @@ async def search_docs(query: str, top_k: int = 5) -> list[dict]:
     if cached is not None:
         return cached
 
-    model = _get_model()
+    provider = get_provider()
     collection = _get_collection()
 
     if collection.count() == 0:
         return []
 
-    embedding_response = await asyncio.to_thread(
-        lambda: model.embeddings.create(model="text-embedding-3-small", input=query)
-    )
-    query_embedding = embedding_response.data[0].embedding
+    query_embedding = await provider.embed_query(query)
 
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -560,9 +542,8 @@ def get_doc_stats() -> dict:
 
 
 async def close():
-    global _model, _chroma_client, _collection
+    global _chroma_client, _collection
 
-    _model = None
     _collection = None
     _chroma_client = None
     logger.info("Documentation embeddings service closed")

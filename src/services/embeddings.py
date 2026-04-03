@@ -8,15 +8,14 @@ import tiktoken
 
 from .._cache import TTLCache
 from .._hash import content_hash
-from .embeddings_utils import validate_and_get_openai_client
+from .embeddings_utils import get_provider
 
 logger = logging.getLogger(__name__)
 
-# tiktoken encoder for text-embedding-3-small (cl100k_base)
+# tiktoken encoder for chunking (cl100k_base)
 _enc = tiktoken.get_encoding("cl100k_base")
 MAX_TOKENS_PER_INPUT = 8000  # hard limit is 8192, leave headroom
 
-_model = None
 _chroma_client = None
 _collection = None
 
@@ -91,15 +90,6 @@ _update_lock = asyncio.Lock()
 
 _initialized = asyncio.Event()
 _initialization_started = False
-
-
-def _get_model():
-    global _model
-    if _model is None:
-        api_key = os.getenv("OPENAI_EMBEDDINGS_API")
-        _model = validate_and_get_openai_client(api_key, service_name="code_embeddings")
-        logger.info("OpenAI embeddings client initialized for code")
-    return _model
 
 
 def _get_collection():
@@ -326,7 +316,7 @@ async def embed_repository(repo: str, force_full: bool = False) -> int:
         logger.error(f"Repo not found at {repo_path}")
         return 0
 
-    model = _get_model()
+    provider = get_provider()
     collection = _get_collection()
 
     files = _collect_code_files(repo_path)
@@ -429,10 +419,7 @@ async def embed_repository(repo: str, force_full: bool = False) -> int:
                     batch_metadatas.append(all_metadatas[i])
                     batch_tokens += doc_tokens
                     i += 1
-                embedding_response = await asyncio.to_thread(
-                    lambda docs=batch_docs: model.embeddings.create(model="text-embedding-3-small", input=docs)
-                )
-                batch_embeddings = [item.embedding for item in embedding_response.data]
+                batch_embeddings = await provider.embed(batch_docs)
 
                 # Upsert immediately — saves progress even if later batches fail
                 collection.upsert(
@@ -457,19 +444,9 @@ async def embed_repository(repo: str, force_full: bool = False) -> int:
             error_msg = str(e)
             if "401" in error_msg or "permission" in error_msg.lower() or "scope" in error_msg.lower():
                 logger.error(
-                    "❌ OpenAI API Error - Authentication Failed!\n"
+                    "Embedding API authentication failed!\n"
                     f"  Error: {error_msg}\n"
-                    "  \n"
-                    "  This likely means:\n"
-                    "  1. Your OPENAI_EMBEDDINGS_API key is invalid or expired\n"
-                    "  2. Your key doesn't have Embedding API access\n"
-                    "  3. You're using the wrong API key (not OpenAI)\n"
-                    "  \n"
-                    "  Fix:\n"
-                    "  1. Get a valid key from: https://platform.openai.com/api-keys\n"
-                    "  2. Make sure it has Embedding model access (text-embedding-3-small)\n"
-                    "  3. Update OPENAI_EMBEDDINGS_API in your .env file\n"
-                    "  4. Restart the bot"
+                    "  Check your EMBEDDINGS_API_KEY in .env and embeddings config in config.json."
                 )
                 raise
             else:
@@ -491,16 +468,13 @@ async def search_code(query: str, top_k: int = 5) -> list[dict]:
     if cached is not None:
         return cached
 
-    model = _get_model()
+    provider = get_provider()
     collection = _get_collection()
 
     if collection.count() == 0:
         return []
 
-    embedding_response = await asyncio.to_thread(
-        lambda: model.embeddings.create(model="text-embedding-3-small", input=query, dimensions=1536)
-    )
-    query_embedding = embedding_response.data[0].embedding
+    query_embedding = await provider.embed_query(query)
 
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -609,7 +583,8 @@ def get_stats() -> dict:
 
 
 async def close():
-    global _model, _chroma_client, _collection, _pending_update_task
+    global _chroma_client, _collection, _pending_update_task
+    from .embeddings_utils import reset_provider
 
     if _pending_update_task and not _pending_update_task.done():
         _pending_update_task.cancel()
@@ -618,7 +593,7 @@ async def close():
         except asyncio.CancelledError:
             pass
 
-    _model = None
     _collection = None
     _chroma_client = None
+    reset_provider()
     logger.info("Embeddings service closed")
