@@ -42,7 +42,7 @@ class Config:
         # BOT CONFIG (from config.json)
         # =================================================================
         bot_cfg = cfg.get("bot", {})
-        self.bot_name = bot_cfg.get("name", "Polly")
+        self.bot_name = bot_cfg.get("name", "Tommy")
         self.default_repo = bot_cfg.get("default_repo", "pollinations/pollinations")
 
         # =================================================================

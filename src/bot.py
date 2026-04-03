@@ -443,7 +443,7 @@ async def fetch_thread_history(thread: discord.Thread, limit: int = THREAD_HISTO
     return messages
 
 
-class PollyBot(commands.Bot):
+class TommyBot(commands.Bot):
     """Discord bot for GitHub Issues bridge with tool calling."""
 
     def __init__(self):
@@ -527,7 +527,7 @@ class PollyBot(commands.Bot):
         if config.api_enabled:
             from granian.server.embed import Server as GranianServer
 
-            from .api.polly_api import create_api_app
+            from .api.tommy_api import create_api_app
 
             api_app = create_api_app(pollinations_client, config)
             self._api_server = GranianServer(
@@ -544,7 +544,7 @@ class PollyBot(commands.Bot):
                     else None
                 )
             )
-            logger.info(f"Polly API started on port {config.api_port}")
+            logger.info(f"Tommy API started on port {config.api_port}")
 
         # Pre-warm aiohttp connection pool (eliminates TLS cold-start on first request)
         try:
@@ -564,7 +564,7 @@ class PollyBot(commands.Bot):
         """Clean up resources when bot shuts down."""
         if self._api_server:
             self._api_server.stop()
-            logger.info("Polly API stopped")
+            logger.info("Tommy API stopped")
         self.cleanup_sessions.cancel()
         if config.doc_embeddings_enabled:
             self.update_doc_embeddings.cancel()
@@ -627,7 +627,7 @@ class PollyBot(commands.Bot):
         await self.wait_until_ready()
 
 
-bot = PollyBot()
+bot = TommyBot()
 
 
 @bot.tree.context_menu(name="Assist")
@@ -804,7 +804,7 @@ async def on_message(message: discord.Message):
 
         # Auto-created thread from inline reply (no session) — respond inline
         if not session and is_reply_to_bot and not is_mentioned:
-            await handle_inline_polly_mention(message)
+            await handle_inline_tommy_mention(message)
             return
 
         # Extract text
@@ -863,7 +863,7 @@ async def on_message(message: discord.Message):
         text = "[User attached media/files]"
 
     # Create thread and start new conversation
-    logger.info("PATH: CREATING THREAD (line 1020) - This should ONLY happen for @polly!")
+    logger.info("PATH: CREATING THREAD (line 1020) - This should ONLY happen for @tommy!")
     await start_conversation(message, text, image_urls, video_urls, file_urls)
 
 
@@ -1007,11 +1007,11 @@ async def start_conversation(
         )
 
 
-async def handle_inline_polly_mention(message: discord.Message):
+async def handle_inline_tommy_mention(message: discord.Message):
     """
-    Handle casual "polly" mention - inline, focused, human-like reply.
+    Handle casual "tommy" mention - inline, focused, human-like reply.
 
-    Key differences from @polly:
+    Key differences from @tommy:
     - Has channel history for CONTEXT (like a human reading chat)
     - But ONLY replies to current message (not whole convo)
     - Concise, direct responses (1-3 sentences)
@@ -1022,9 +1022,9 @@ async def handle_inline_polly_mention(message: discord.Message):
     image_urls, video_urls, file_urls = extract_media_urls(message)
 
     if not text and (image_urls or video_urls or file_urls):
-        text = "[User mentioned polly with media/files - respond briefly and naturally]"
+        text = "[User mentioned tommy with media/files - respond briefly and naturally]"
 
-    # Fetch recent channel history for CONTEXT (last 20 messages - lighter than @polly)
+    # Fetch recent channel history for CONTEXT (last 20 messages - lighter than @tommy)
     channel_history = []
     try:
         async for msg in message.channel.history(limit=21):  # +1 to skip current
@@ -1067,14 +1067,14 @@ async def handle_inline_polly_mention(message: discord.Message):
             inline_system_prompt = {
                 "role": "system",
                 "content": (
-                    "You are Polly responding inline. Be EXTREMELY SHORT. "
+                    "You are Tommy responding inline. Be EXTREMELY SHORT. "
                     "Ideal: 1-5 WORDS. Max: 1 sentence if absolutely necessary. "
                     "Examples of GOOD responses: "
-                    "'yep works fine' / 'nope, down' / 'try gen.pollinations.ai' / 'doc search empty' "
+                    "'yep works fine' / 'nope, down' / 'doc search empty' "
                     "Examples of BAD responses: "
                     "'It seems the doc search is running but empty...' (TOO LONG) "
                     "Talk like texting a friend - minimal words, maximum info. "
-                    "For anything complex, say '@polly for details'."
+                    "For anything complex, say '@tommy for details'."
                 ),
             }
 
@@ -1117,7 +1117,7 @@ async def handle_inline_polly_mention(message: discord.Message):
                     mention_author=False,
                 )
         except Exception as e:
-            logger.error(f"Error processing inline polly mention: {e}")
+            logger.error(f"Error processing inline tommy mention: {e}")
             await message.reply("Sorry, I encountered an error processing your request.", mention_author=False)
 
 
@@ -1287,7 +1287,7 @@ async def process_message(
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are Polly. The user sent a message but you didn't respond. Generate a helpful response - ask clarifying questions if you're unsure what they want, or summarize what you found if you used tools.",
+                        "content": "You are Tommy. The user sent a message but you didn't respond. Generate a helpful response - ask clarifying questions if you're unsure what they want, or summarize what you found if you used tools.",
                     },
                     {"role": "user", "content": text},
                 ],

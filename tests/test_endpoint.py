@@ -26,7 +26,7 @@ try:
     print(json.dumps(result, indent=2))
     
 except requests.exceptions.ConnectionError:
-    print("Error: Could not connect to server. Make sure polly_api.py is running ")
+    print("Error: Could not connect to server. Make sure tommy_api.py is running ")
 except requests.exceptions.Timeout:
     print("Error: Request timed out")
 except Exception as e:

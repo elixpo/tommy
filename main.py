@@ -26,7 +26,7 @@ def main():
     setup_logging(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting Polly Helper Bot...")
+    logger.info("Starting Tommy Bot...")
     config.validate()
 
     try:

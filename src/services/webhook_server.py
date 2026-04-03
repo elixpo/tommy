@@ -38,7 +38,7 @@ class GitHubWebhookServer:
 
     async def health_check(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
-        return web.json_response({"status": "ok", "service": "polly-webhook"})
+        return web.json_response({"status": "ok", "service": "tommy-webhook"})
 
     def verify_signature(self, payload: bytes, signature: str) -> bool:
         """Verify GitHub webhook signature."""

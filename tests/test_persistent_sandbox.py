@@ -291,7 +291,7 @@ async def test_concurrent_tasks():
 
 if __name__ == "__main__":
     print("Testing Persistent Sandbox Architecture")
-    print("This will create/use a Docker container named 'polly_sandbox'\n")
+    print("This will create/use a Docker container named 'tommy_sandbox'\n")
 
     try:
         result1 = asyncio.run(test_persistent_sandbox())

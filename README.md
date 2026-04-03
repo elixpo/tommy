@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="https://image.pollinations.ai/prompt/A%20cute%20parrot%20mascot%20named%20Polly%20with%20GitHub%20and%20Discord%20logos%2C%20digital%20art%2C%20friendly%2C%20colorful?width=200&height=200&nologo=true" alt="Polly" width="150" height="150">
-</p>
-
-<h1 align="center">🦜 Polly</h1>
+<h1 align="center">Tommy</h1>
 
 <p align="center">
   <strong>Bidirectional GitHub ↔ Discord Assistant</strong>
@@ -30,7 +26,7 @@
 ### 🔄 Bidirectional Communication
 | Platform | Trigger | Response |
 |----------|---------|----------|
-| **Discord** | @mention Polly | Replies in thread |
+| **Discord** | @mention Tommy | Replies in thread |
 | **GitHub** | @mention in issues/PRs/comments | Replies on GitHub |
 
 ### 🎯 Full GitHub Integration
@@ -97,18 +93,18 @@
 
 ### Discord → GitHub
 ```
-User: @Polly find 502 errors
+User: @Tommy find 502 errors
 
    [Thread Created: "Issue: 502 errors"]
 
-Polly: Found 3 open issues:
+Tommy: Found 3 open issues:
        • #156 - 502 errors on Flux model
        • #142 - Intermittent 502 on image gen
        • #98 - API returning 502 under load
 
 User: review PR #200
 
-Polly: 🔍 Reviewing PR #200...
+Tommy: 🔍 Reviewing PR #200...
 
        ✅ Overall: LGTM with minor suggestions
 
@@ -121,7 +117,7 @@ Polly: 🔍 Reviewing PR #200...
 <!-- In a GitHub issue comment -->
 @pollinations-ci can you explain what this error means?
 
-<!-- Polly replies directly on GitHub -->
+<!-- Tommy replies directly on GitHub -->
 This error occurs when... [detailed explanation]
 ```
 
@@ -137,7 +133,7 @@ This error occurs when... [detailed explanation]
 ### 1️⃣ Clone & Install
 
 ```bash
-cd apps/polly
+cd apps/tommy
 python -m venv venv
 source venv/bin/activate  # or `venv\Scripts\activate` on Windows
 pip install -r requirements.txt
@@ -155,7 +151,7 @@ Edit `.env` with your credentials:
 # Required
 DISCORD_TOKEN=your_discord_bot_token
 GITHUB_APP_ID=your_app_id
-GITHUB_PRIVATE_KEY=./polly.pem  # file path or inline key
+GITHUB_PRIVATE_KEY=./tommy.pem  # file path or inline key
 GITHUB_INSTALLATION_ID=your_installation_id
 
 # Optional
@@ -220,7 +216,7 @@ python main.py
 ## 📁 Project Structure
 
 ```
-Polly/
+Tommy/
 ├── 📄 main.py                    # Entry point
 ├── 📄 requirements.txt           # Dependencies
 ├── 📄 .env.example               # Environment template

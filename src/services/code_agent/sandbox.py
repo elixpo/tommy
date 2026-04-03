@@ -2,7 +2,7 @@
 Persistent Docker sandbox for ccr code execution.
 
 Architecture:
-- Single persistent container "polly_sandbox" running 24/7
+- Single persistent container "tommy_sandbox" running 24/7
 - Volume mount: data/sandbox/workspace -> /workspace in container
 - ccr service runs inside, handles multiple concurrent tasks
 - Each task creates a git branch for isolation
@@ -24,7 +24,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-CONTAINER_NAME = "polly_sandbox"
+CONTAINER_NAME = "tommy_sandbox"
 
 @dataclass
 class TerminalSession:

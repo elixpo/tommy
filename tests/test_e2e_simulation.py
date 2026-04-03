@@ -1,7 +1,7 @@
 """
 End-to-End Simulation Test for CCR Sandbox Integration.
 
-This script simulates EXACTLY what polly_agent.py and claude_code_agent.py do:
+This script simulates EXACTLY what tommy_agent.py and claude_code_agent.py do:
 1. Create Docker sandbox
 2. Install ccr
 3. Setup coder user

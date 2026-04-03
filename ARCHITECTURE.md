@@ -1,4 +1,4 @@
-# Polly Bot - Architecture
+# Tommy Bot - Architecture
 
 ```mermaid
 %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#bb86fc', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#bb86fc', 'lineColor': '#03dac6', 'secondaryColor': '#3700b3', 'tertiaryColor': '#1e1e1e', 'background': '#121212', 'mainBkg': '#1e1e1e', 'nodeBorder': '#bb86fc', 'clusterBkg': '#2d2d2d', 'clusterBorder': '#bb86fc', 'titleColor': '#ffffff', 'edgeLabelBackground': '#1e1e1e'}}}%%
@@ -9,12 +9,12 @@ flowchart TB
         MAIN["main.py<br/>Entry Point"]
         DISCORD_EVENT["Discord Events<br/>@mention / reply / context menu"]
         WEBHOOK_IN["GitHub Webhook<br/>@mention in issues/PRs"]
-        HTTP_API["HTTP API<br/>polly_api.py"]
+        HTTP_API["HTTP API<br/>tommy_api.py"]
     end
 
     subgraph DISCORD_LAYER["**DISCORD LAYER** - src/bot.py"]
         direction TB
-        POLLYBOT["PollyBot<br/>(commands.Bot)"]
+        TOMMYBOT["TommyBot<br/>(commands.Bot)"]
 
         subgraph EVENTS["Event Handlers"]
             ON_READY["on_ready()"]
@@ -209,15 +209,15 @@ flowchart TB
     %% ============== CONNECTIONS ==============
 
     %% Entry flow
-    MAIN --> POLLYBOT
+    MAIN --> TOMMYBOT
     DISCORD_EVENT --> ON_MESSAGE
     WEBHOOK_IN --> WH_SERVER
     HTTP_API --> POLL_CLIENT
 
     %% Discord flow
-    POLLYBOT --> ON_READY
-    POLLYBOT --> ON_MESSAGE
-    POLLYBOT --> ASSIST_CTX
+    TOMMYBOT --> ON_READY
+    TOMMYBOT --> ON_MESSAGE
+    TOMMYBOT --> ASSIST_CTX
     ON_READY --> SYNC_CMD["Sync slash commands"]
     ON_MESSAGE --> IS_ADMIN
     ON_MESSAGE --> START_CONV
@@ -265,7 +265,7 @@ flowchart TB
     %% Subscriptions
     POLL_LOOP --> GH_GRAPHQL
     POLL_LOOP --> SEND_NOTIF
-    SEND_NOTIF --> POLLYBOT
+    SEND_NOTIF --> TOMMYBOT
 
     %% Embeddings
     SEARCH_CODE_FN --> EMB_MODEL
@@ -282,7 +282,7 @@ flowchart TB
     SESSION_MGR --> CONV_SESSION
 
     %% Background tasks
-    POLLYBOT --> TASKS
+    TOMMYBOT --> TASKS
     UPDATE_DOCS --> DOC_CRAWL
 
     %% Config connections
@@ -297,7 +297,7 @@ flowchart TB
     classDef config fill:#78909c,stroke:#546e7a,color:#fff
 
     class MAIN,DISCORD_EVENT,WEBHOOK_IN,HTTP_API entry
-    class POLLYBOT,EVENTS,MSG_FLOW,ADMIN,TASKS discord
+    class TOMMYBOT,EVENTS,MSG_FLOW,ADMIN,TASKS discord
     class POLL_CLIENT,AI_METHODS,AI_FEATURES ai
     class AUTH,REST,GRAPHQL,PR,WH_SERVER github
     class SUB_MANAGER,CHROMADB,SCRAPE_CACHE,SESSION_MGR storage
@@ -310,12 +310,12 @@ flowchart TB
 - **main.py** - Bot startup, logging config, Discord client run
 - **Discord Events** - @mentions, replies, context menu actions
 - **GitHub Webhooks** - @mentions in issues, PRs, comments
-- **HTTP API** - OpenAI-compatible REST API (polly_api.py)
+- **HTTP API** - OpenAI-compatible REST API (tommy_api.py)
 
 ### Core Components
 
 #### Discord Layer (src/bot.py)
-- `PollyBot` extends `commands.Bot`
+- `TommyBot` extends `commands.Bot`
 - Handles message events, thread creation, admin checks
 - Background tasks: session cleanup (1 min), doc embeddings update (6 hrs)
 

@@ -1,4 +1,4 @@
-name: Polly
+name: Tommy
 
 on:
   issue_comment:
@@ -11,12 +11,12 @@ on:
     types: [submitted]
 
 jobs:
-  polly:
+  tommy:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, 'polly')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, 'polly')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, 'polly')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, 'polly') || contains(github.event.issue.title, 'polly')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, 'tommy')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, 'tommy')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, 'tommy')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, 'tommy') || contains(github.event.issue.title, 'tommy')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -25,13 +25,13 @@ jobs:
       id-token: write
       actions: read
     env:
-      POLLINATIONS_TOKEN: ${{ secrets.PLN_GITHUB_POLLY_KEY }}
+      POLLINATIONS_TOKEN: ${{ secrets.PLN_GITHUB_TOMMY_KEY }}
     steps:
       - uses: actions/create-github-app-token@v1
         id: token
         with:
-          app-id: ${{ secrets.POLLY_BOT_APP_ID }}
-          private-key: ${{ secrets.POLLY_BOT_PRIVATE_KEY }}
+          app-id: ${{ secrets.TOMMY_BOT_APP_ID }}
+          private-key: ${{ secrets.TOMMY_BOT_PRIVATE_KEY }}
 
       - name: Check Whitelist
         id: whitelist
@@ -39,7 +39,7 @@ jobs:
         with:
           github-token: ${{ steps.token.outputs.token }}
           script: |
-            // Strict case check: ensure lowercase 'polly' exists
+            // Strict case check: ensure lowercase 'tommy' exists
             let body = '';
             if (context.eventName === 'issue_comment' || context.eventName === 'pull_request_review_comment') {
               body = context.payload.comment?.body || '';
@@ -48,8 +48,8 @@ jobs:
             } else if (context.eventName === 'pull_request_review') {
               body = context.payload.review?.body || '';
             }
-            if (!body.includes('polly')) {
-              console.log('Strict check failed: "polly" must be lowercase.');
+            if (!body.includes('tommy')) {
+              console.log('Strict check failed: "tommy" must be lowercase.');
               core.setOutput('authorized', 'false');
               return; 
             }
@@ -60,7 +60,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue?.number || context.payload.pull_request?.number,
-                body: `Sorry @${actor}, only whitelisted users can use Polly.`
+                body: `Sorry @${actor}, only whitelisted users can use Tommy.`
               });
               core.setOutput('authorized', 'false');
             } else {
@@ -118,8 +118,8 @@ jobs:
           anthropic_api_key: "ccr-pollinations"
           show_full_output: true
           github_token: ${{ steps.token.outputs.token }}
-          trigger_phrase: "polly"
+          trigger_phrase: "tommy"
           claude_args: |
-            --system-prompt "You are Polly, a helpful developer on the Pollinations team. Never mention Claude, Claude Code, AI, or LLMs — you are just a team member. Be casual, concise, and human. Use bullet points. No verbose explanations. When commenting on issues or reviewing PRs, write like a friendly dev — short, direct, helpful."
+            --system-prompt "You are Tommy, a helpful developer on the team. Never mention Claude, Claude Code, AI, or LLMs — you are just a team member. Be casual, concise, and human. Use bullet points. No verbose explanations. When commenting on issues or reviewing PRs, write like a friendly dev — short, direct, helpful."
           additional_permissions: |
             actions: read

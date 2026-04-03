@@ -1,1 +1,1 @@
-"""Polly Helper Bot - Discord bot for creating GitHub issues."""
+"""Tommy Bot - Discord-to-GitHub orchestrator bot."""

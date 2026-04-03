@@ -25,8 +25,8 @@ jobs:
         id: pollinations-ai
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.POLLY_BOT_APP_ID }}
-          private-key: ${{ secrets.POLLY_BOT_PRIVATE_KEY }}
+          app-id: ${{ secrets.TOMMY_BOT_APP_ID }}
+          private-key: ${{ secrets.TOMMY_BOT_PRIVATE_KEY }}
           owner: pollinations
 
       - name: Set up Python
@@ -41,5 +41,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.pollinations-ai.outputs.token }}
           GITHUB_EVENT: ${{ toJSON(github.event) }}
-          POLLINATIONS_TOKEN: ${{ secrets.PLN_GITHUB_POLLY_KEY }}
+          POLLINATIONS_TOKEN: ${{ secrets.PLN_GITHUB_TOMMY_KEY }}
         run: python .github/scripts/project-manager.py

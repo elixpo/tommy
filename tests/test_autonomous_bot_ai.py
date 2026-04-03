@@ -30,7 +30,7 @@ class ToolType(Enum):
     CODE_SEARCH = "code_search"
     WEB_SEARCH = "web_search"
     ASK_USER = "ask_user"
-    POLLY_AGENT = "polly_agent"  # calls ccr
+    TOMMY_AGENT = "tommy_agent"  # calls ccr
     UPDATE_EMBED = "update_embed"
 
 @dataclass

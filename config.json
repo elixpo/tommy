@@ -1,13 +1,13 @@
 {
   "bot": {
-    "name": "Polly",
+    "name": "Tommy",
     "default_repo": "pollinations/pollinations"
   },
   "discord": {
     "admin_role_ids": [911279121307414558, 1340339234065744006]
   },
   "github": {
-    "bot_username": "polly-bot-pollinations-ai",
+    "bot_username": "tommy-bot",
     "admin_users": ["voodoohop", "Itachi-1824", "eulervoid", "ElliotEtag", "Circuit-Overtime"],
     "whitelisted_repos": ["pollinations/pollinations"],
     "admin_only_mentions": true

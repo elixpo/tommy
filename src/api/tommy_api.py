@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
     """
 
     messages: list[Message]
-    model: str | None = None  # ignored — always routes to polly
+    model: str | None = None  # ignored — always routes to tommy
 
     # Generation parameters — all passed through to the underlying LLM
     temperature: float | None = None
@@ -67,7 +67,7 @@ class ChatRequest(BaseModel):
     function_call: str | dict | None = None
     functions: list | None = None
 
-    # Polly-specific (Discord bot context)
+    # Tommy-specific (Discord bot context)
     user_name: str | None = "http_user"
     image_urls: list[str] | None = None
     video_urls: list[str] | None = None
@@ -111,7 +111,7 @@ def create_api_app(pollinations_client, config):
     No tool registration — uses bot's pollinations_client directly.
     Key pass-through — user's Authorization header is forwarded to gen.pollinations.ai.
     """
-    app = FastAPI(title="Polly API", description="OpenAI-compatible API for Polly")
+    app = FastAPI(title="Tommy API", description="OpenAI-compatible API for Tommy")
     app.state.start_time = time.time()
 
     app.add_middleware(
@@ -139,7 +139,7 @@ def create_api_app(pollinations_client, config):
         if request.stream:
             raise HTTPException(
                 status_code=400,
-                detail="Streaming is not supported for the polly model. Use stream=false.",
+                detail="Streaming is not supported for the tommy model. Use stream=false.",
             )
 
         thread_history = None
@@ -197,7 +197,7 @@ def create_api_app(pollinations_client, config):
                     "id": f"chatcmpl-{uuid4_hex()[:24]}",
                     "object": "chat.completion",
                     "created": int(time.time()),
-                    "model": "polly",
+                    "model": "tommy",
                     "choices": [
                         {
                             "index": 0,
