@@ -217,9 +217,40 @@ data/
 
 ---
 
-## Running in the Background
+## Running with Docker (Recommended for Production)
 
-For production, use a process manager so the bot stays running:
+The easiest way to run Tommy in production:
+
+```bash
+# Make sure you've done Steps 4 and 5 first (.env and config.json)
+docker compose up -d
+```
+
+This starts three containers:
+
+| Container | What it does |
+|---|---|
+| `tommy` | The bot itself |
+| `tommy-chromadb` | Vector database for code/doc embeddings |
+| `tommy_sandbox` | Isolated workspace for the code agent |
+
+To view logs:
+```bash
+docker compose logs -f tommy
+```
+
+To stop:
+```bash
+docker compose down
+```
+
+Your data (repo clones, embeddings, sandbox files) is stored in Docker volumes and persists across restarts.
+
+---
+
+## Running Without Docker
+
+If you prefer running directly on the host:
 
 ```bash
 # Using systemd (Linux)
