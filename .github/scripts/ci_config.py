@@ -54,16 +54,46 @@ def _deep_get(d: Dict, *keys: str, default: Any = None) -> Any:
     return d
 
 
+def _find_runtime_config() -> Path:
+    """Find config.json (runtime config for the bot)."""
+    current = Path(__file__).resolve().parent
+    for _ in range(10):
+        candidate = current / "config.json"
+        if candidate.exists():
+            return candidate
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    workspace = os.environ.get("GITHUB_WORKSPACE", "")
+    if workspace:
+        candidate = Path(workspace) / "config.json"
+        if candidate.exists():
+            return candidate
+    return Path("config.json")  # fallback, may not exist
+
+
 def load_config() -> Dict:
-    """Load and return the full config dict."""
+    """Load and return the full CI config dict from tommy.yml."""
     path = _find_config()
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     return data
 
 
-# ── Module-level singleton ──────────────────────────────────────────
+def load_runtime_config() -> Dict:
+    """Load config.json (runtime config — bot identity, admin users, repos)."""
+    path = _find_runtime_config()
+    if not path.exists():
+        return {}
+    import json
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ── Module-level singletons ─────────────────────────────────────────
 cfg: Dict = load_config()
+runtime_cfg: Dict = load_runtime_config()
 
 
 # ── Convenience accessors ───────────────────────────────────────────

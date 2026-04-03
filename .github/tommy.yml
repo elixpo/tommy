@@ -24,13 +24,9 @@ bot:
 
 # ── GitHub ──────────────────────────────────────────────────────────
 github:
-  # Users allowed to invoke the bot via trigger_phrase
-  whitelist:
-    - voodoohop
-    - ElliotEtag
-    - eulervoid
-    - Circuit-Overtime
-    - Itachi-1824
+  # Users allowed to invoke the bot via trigger_phrase.
+  # Loaded from config.json → github.admin_users at CI runtime.
+  # Do NOT duplicate the list here — edit config.json instead.
 
   # GitHub secret names (must match what you set in repo Settings → Secrets)
   secrets:
