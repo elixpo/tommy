@@ -15,7 +15,7 @@ This guide walks you through setup from scratch. No prior experience with bots r
 
 ---
 
-## Step 1 — Get the Code
+## Step 1 — Clone Tommy
 
 ```bash
 git clone https://github.com/your-org/tommy.git
@@ -24,6 +24,8 @@ python -m venv venv
 source venv/bin/activate    # on Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+Tommy also needs a clone of **your project's repo** to index it for code search. You don't need to do this manually — Tommy clones it automatically into `data/repo/` when embeddings are enabled (Step 5). But the machine running Tommy needs `git` installed and network access to GitHub.
 
 ---
 
@@ -163,7 +165,7 @@ Mention the bot in Discord (`@Tommy help`) to verify it's working.
 
 ## Step 8 — Set Up CI Pipelines (Optional)
 
-Tommy comes with GitHub Actions workflows that respond to mentions in issues/PRs, auto-assign PR authors, and manage project boards.
+Tommy comes with GitHub Actions workflows that respond to mentions in issues/PRs, auto-assign PR authors, auto-fix issues, and manage project boards.
 
 ### Add GitHub Secrets
 
@@ -184,8 +186,34 @@ Open `.github/tommy.yml` and review the settings. The key ones:
 - `bot.trigger_phrase` — the word that activates the bot in GitHub issues/PRs (default: `tommy`)
 - `github.secrets` — must match the secret names you just added
 - `ai.models` — which AI models the CI workflows use
+- `autofix.label` — label an issue with this (default: `tommy`) and the AI will auto-fix it and open a PR
 
-The workflows will now respond when someone writes "tommy" in an issue or PR comment.
+The workflows will now respond when someone writes "tommy" in an issue or PR comment, and auto-fix issues when labeled.
+
+---
+
+## What Tommy Creates on Disk
+
+Tommy stores all runtime data in a `data/` folder at the project root. This folder is created automatically — you never need to create it yourself.
+
+```
+data/
+├── repo/                    # Cloned copy of your repo (for code search)
+│   └── your-org_your-repo/  # Auto-cloned, auto-updated on PR merges
+├── embeddings/              # Code embedding vectors (ChromaDB)
+├── doc_embeddings/          # Documentation embedding vectors (ChromaDB)
+├── doc_cache/               # Cached scraped documentation pages
+└── sandbox/                 # Docker sandbox workspace (for code agent)
+    └── workspace/           # Mounted into the sandbox container
+```
+
+- **`data/repo/`** — Tommy clones your repo here when `local_embeddings_enabled` is `true`. It auto-pulls when PRs are merged so the index stays fresh.
+- **`data/embeddings/`** — ChromaDB vector database storing your code chunks. Persists across restarts so re-embedding is incremental (only changed files).
+- **`data/doc_embeddings/`** — Same as above but for documentation sites configured in `doc_sites`.
+- **`data/doc_cache/`** — Raw crawled pages from your doc sites, cached to avoid re-scraping.
+- **`data/sandbox/`** — Working directory for the code agent. Files here are mounted into a Docker container named `tommy_sandbox` when running autonomous coding tasks.
+
+> **Cleanup**: You can safely delete any folder inside `data/` to force a fresh rebuild. Tommy will recreate everything on the next run.
 
 ---
 
@@ -216,3 +244,5 @@ python main.py
 | Bot doesn't respond | Make sure the bot has permission to read/send messages in the channel. Check that it's actually online in the server member list. |
 | GitHub commands fail | Verify your GitHub App is installed on the correct repo and has the right permissions. |
 | Embeddings fail | Check `EMBEDDINGS_API_KEY` in `.env` if using `"provider": "api"`. For local models, make sure the model downloads successfully. |
+| Code search returns nothing | Make sure `local_embeddings_enabled` is `true` and `embeddings_repo` points to your repo in `config.json`. Check the logs for embedding progress. |
+| `data/` folder is huge | The repo clone and embeddings can take space. Delete `data/embeddings/` to force a re-index, or `data/repo/` to re-clone. |
