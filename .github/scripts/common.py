@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Common utilities for social media post generators.
-Shared code for LinkedIn, Twitter, and other platforms.
+Common utilities for CI scripts.
+Used by generate_realtime.py, publish_realtime.py, and pr-review.py.
 """
 
 import os
@@ -11,11 +11,10 @@ import json
 import random
 import requests
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from pathlib import Path
 
-from ci_config import cfg, ai_api_base, ai_image_base, ai_model, image_style_suffix, image_size, character_ref_url, gists_branch, gists_dir, discord_char_limit, discord_chunk_size
+from ci_config import ai_api_base, ai_image_base, ai_model, image_style_suffix, character_ref_url, gists_branch, gists_dir, discord_char_limit
 
 # API Endpoints — read from .github/tommy.yml
 GITHUB_API_BASE = "https://api.github.com"
@@ -25,32 +24,20 @@ POLLINATIONS_IMAGE_BASE = ai_image_base()
 # Models — read from .github/tommy.yml
 MODEL = ai_model("text")
 IMAGE_MODEL = ai_model("image")
-WEBSEARCH_MODEL = ai_model("websearch")
 
 # Limits and retry settings
 MAX_SEED = 2147483647
 MAX_RETRIES = 3
 INITIAL_RETRY_DELAY = 2
-DEFAULT_TIMEOUT = 30  # seconds for GitHub API / general requests
-LINKEDIN_MAX_CHARS = 1248
+DEFAULT_TIMEOUT = 30
 
-# Repository constants — derived from REPO_FULL_NAME env var at runtime
-# Fallback to config values if env var is not set
-_repo_full = os.environ.get("REPO_FULL_NAME", "")
-if "/" in _repo_full:
-    OWNER, REPO = _repo_full.split("/", 1)
-else:
-    OWNER = ""
-    REPO = ""
 GISTS_BRANCH = gists_branch()
 
 # Image generation — read from .github/tommy.yml
-IMAGE_SIZE = image_size()
 IMAGE_STYLE_SUFFIX = image_style_suffix()
 
 # Discord-specific — read from .github/tommy.yml
 DISCORD_CHAR_LIMIT = discord_char_limit()
-DISCORD_CHUNK_SIZE = discord_chunk_size()
 
 # Get the directory where this script lives
 SCRIPTS_DIR = Path(__file__).parent
@@ -250,14 +237,6 @@ def load_format(platform: str) -> str:
         print(f"Warning: No ## {platform} section found in format.md")
 
     return "\n".join(section_lines).strip()
-
-
-def get_date_range(days_back: int = 1) -> tuple[datetime, datetime]:
-    """Get date range for the specified number of days back"""
-    now = datetime.now(timezone.utc)
-    end_date = now
-    start_date = end_date - timedelta(days=days_back)
-    return start_date, end_date
 
 
 def call_pollinations_api(
