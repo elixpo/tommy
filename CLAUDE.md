@@ -28,6 +28,30 @@ Tommy uses a unified embedding provider configured in `config.json` under `"embe
 
 All three embedding subsystems (code, docs, session) share the same provider via `src/services/embeddings_utils.py`.
 
+## CI Configuration
+
+All CI/CD pipelines are configured via a single file: `.github/tommy.yml`. **No org-specific values are hardcoded in workflow YAMLs or Python scripts.**
+
+- `.github/tommy.yml` — Global config: bot identity, trigger phrase, whitelist, AI endpoints/models, router config, image settings, project manager settings
+- `.github/scripts/ci_config.py` — Python loader that all scripts import from
+- Workflows read the config at runtime via `yq` in a "Load Config" step
+
+To adopt Tommy for a new org: fork, edit `.github/tommy.yml`, set the required GitHub secrets.
+
+### Workflows
+- `pr-issue-assist.yml` — AI assistant triggered by mentioning the bot in issues/PRs
+- `pr-review.yml` — AI code review on PRs
+- `pr-assign-author.yml` — Auto-assigns PR author
+- `project-manager.yml` — AI-powered issue/PR triage and labeling
+
+### Scripts
+- `common.py` — Shared utilities (API calls, image gen, gist I/O)
+- `ci_config.py` — Config loader (reads `.github/tommy.yml`)
+- `pr-review.py` — PR code review logic
+- `generate_realtime.py` — PR gist generator (AI analysis + image)
+- `publish_realtime.py` — Posts gist to Discord
+- `project-manager.py` — Issue/PR categorization and labeling
+
 ## Development
 
 - Python 3.10+
