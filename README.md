@@ -109,17 +109,30 @@ You'll need a **Discord bot token** and a **GitHub App**. The [full setup guide]
 
 ## How It Works
 
-```
- Discord                    Tommy                     GitHub
-────────                  ─────────                  ────────
-@mention ──────────────►  AI Engine  ──────────────► REST / GraphQL API
-  reply  ◄──────────────  + Tools    ◄──────────────  Webhooks
-                             │
-                    ┌────────┼────────┐
-                    ▼        ▼        ▼
-                Embeddings  Code    Web
-                (ChromaDB)  Agent   Search
-                            (Docker)
+```mermaid
+flowchart LR
+    subgraph Discord
+        mention["@mention / reply"]
+    end
+
+    subgraph Tommy["Tommy"]
+        direction TB
+        ai["AI Engine"]
+        ai --> tools["Tool Router"]
+        tools --> embed["Embeddings\n(ChromaDB)"]
+        tools --> agent["Code Agent\n(Docker)"]
+        tools --> web["Web Search"]
+    end
+
+    subgraph GitHub
+        api["REST / GraphQL API"]
+        hooks["Webhooks"]
+    end
+
+    mention -- message --> ai
+    ai -. reply .-> mention
+    tools -- "issues, PRs,\ncode, projects" --> api
+    hooks -- "events" --> ai
 ```
 
 - **AI Engine** — configurable (Pollinations, OpenAI, or any OpenAI-compatible API)
