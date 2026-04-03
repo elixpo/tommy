@@ -1,34 +1,35 @@
 {
   "bot": {
-    "name": "meaw",
-    "default_repo": "elixpo/elixpo_chapter"
+    "name": "Polly",
+    "default_repo": "pollinations/pollinations"
   },
   "discord": {
-    "admin_role_ids": ["roleid1", "roleid2"]
+    "admin_role_ids": [911279121307414558, 1340339234065744006]
   },
   "github": {
-    "bot_username": "meaw-bot",
-    "admin_users": ["admin_github_username1", "admin_github_username2"],
-    "whitelisted_repos": ["elixpo/elixpo_chapter"],
+    "bot_username": "polly-bot-pollinations-ai",
+    "admin_users": ["voodoohop", "Itachi-1824", "eulervoid", "ElliotEtag", "Circuit-Overtime"],
+    "whitelisted_repos": ["pollinations/pollinations"],
     "admin_only_mentions": true
   },
   "webhook": {
     "port": 8002,
-    "enabled": true
+    "enabled": false
+  },
+  "api": {
+    "enabled": true,
+    "port": 55288
   },
   "ai": {
     "model": "kimi",
-    "fallback_model": "openai"
+    "fallback_model": "glm"
   },
   "features": {
-    "sandbox_enabled": true,
     "local_embeddings_enabled": true,
-    "embeddings_repo": "elixpo/elixpo_chapter",
+    "embeddings_repo": "pollinations/pollinations",
     "doc_embeddings_enabled": true,
     "doc_sites": [
-      "https://enter.pollinations.ai",
-      "https://kpi.myceli.ai",
-      "https://gsoc.pollinations.ai"
+      "https://enter.pollinations.ai/api/docs/open-api/generate-schema"
     ]
   }
 }

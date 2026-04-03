@@ -1,70 +1,65 @@
 import asyncio
-import json
 import logging
 import random
 import time
-from typing import Optional, Any, Callable
-from functools import lru_cache
+from collections.abc import Callable
+from contextvars import ContextVar
+
+from .._cache import TTLCache
+from .._json import dumps as _json_dumps
+from .._json import loads as _json_loads
 
 MAX_RETRIES = 3
 RETRY_DELAY = 5
 MAX_SEED = 2**31 - 1
 
+
+class UpstreamAuthError(Exception):
+    """Raised when gen.pollinations.ai returns 401/403 in API mode."""
+
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(f"Upstream auth error {status_code}: {detail}")
+
+
 import aiohttp
 
-from .. import config
+# Per-request auth override (used by API mode to pass through user's key)
+_auth_override: ContextVar[str] = ContextVar("auth_override", default="")
+
+from ..config import config
 from ..constants import (
-    POLLINATIONS_API_BASE,
     API_TIMEOUT,
     GITHUB_TOOLS,
-    get_tool_system_prompt,
-    MAX_TITLE_LENGTH,
-    filter_tools_by_intent,
+    POLLINATIONS_API_BASE,
     filter_admin_actions_from_tools,
+    filter_api_tools,
+    filter_tools_by_intent,
+    get_tool_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class ResponseCache:
-    def __init__(self, ttl: int = 60):
-        self._cache: dict[str, tuple[float, Any]] = {}
-        self._ttl = ttl
-
-    def get(self, key: str) -> Optional[Any]:
-        if key in self._cache:
-            timestamp, value = self._cache[key]
-            if time.time() - timestamp < self._ttl:
-                return value
-            del self._cache[key]
-        return None
-
-    def set(self, key: str, value: Any):
-        self._cache[key] = (time.time(), value)
-
-    def clear_expired(self):
-        now = time.time()
-        expired = [k for k, (t, _) in self._cache.items() if now - t >= self._ttl]
-        for k in expired:
-            del self._cache[k]
-
-
 class PollinationsClient:
     def __init__(self):
-        self._session: Optional[aiohttp.ClientSession] = None
-        self._connector: Optional[aiohttp.TCPConnector] = None
-        self._cache = ResponseCache(ttl=60)
+        self._session: aiohttp.ClientSession | None = None
+        self._connector: aiohttp.TCPConnector | None = None
+        self._cache = TTLCache(maxsize=256, ttl=60)
         self._tool_handlers: dict[str, Callable] = {}
 
     async def get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
+            # Connection pooling for faster subsequent requests
             self._connector = aiohttp.TCPConnector(
-                limit=50,
-                limit_per_host=20,
-                keepalive_timeout=60,
+                limit=100,  # Max connections
+                limit_per_host=30,  # Max per host
+                keepalive_timeout=90,  # Just under Cloudflare's 100s idle timeout
                 enable_cleanup_closed=True,
-                ttl_dns_cache=300,
+                ttl_dns_cache=600,  # Cache DNS for 10 mins
                 use_dns_cache=True,
+                force_close=False,  # Reuse connections
             )
             self._session = aiohttp.ClientSession(
                 connector=self._connector,
@@ -84,10 +79,10 @@ class PollinationsClient:
         self,
         system_prompt: str,
         user_prompt: str,
-        model: Optional[str] = None,
+        model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
-    ) -> Optional[str]:
+    ) -> str | None:
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -122,9 +117,7 @@ class PollinationsClient:
                     return data["choices"][0]["message"].get("content", "")
                 else:
                     error_text = await response.text()
-                    logger.error(
-                        f"generate_text error: HTTP {response.status}: {error_text[:200]}"
-                    )
+                    logger.error(f"generate_text error: HTTP {response.status}: {error_text[:200]}")
                     return None
         except Exception as e:
             logger.error(f"generate_text error: {e}")
@@ -137,25 +130,27 @@ class PollinationsClient:
         self,
         user_message: str,
         discord_username: str,
-        thread_history: Optional[list[dict]] = None,
-        image_urls: Optional[list[str]] = None,
-        video_urls: Optional[list[str]] = None,
-        file_urls: Optional[list[str]] = None,
+        thread_history: list[dict] | None = None,
+        image_urls: list[str] | None = None,
+        video_urls: list[str] | None = None,
+        file_urls: list[str] | None = None,
         is_admin: bool = False,
-        tool_context: Optional[dict] = None,
+        tool_context: dict | None = None,
+        mode: str = "discord",
+        api_params: dict | None = None,
     ) -> dict:
-        system_content = get_tool_system_prompt(is_admin=is_admin)
+        system_content = get_tool_system_prompt(is_admin=is_admin, mode=mode)
         if is_admin:
             system_content += "\n\n## ADMIN MODE\nUser is admin. All tools available. Confirm before destructive ops (merge, delete, lock, close PR, bulk edits, etc.) - use judgment."
         else:
             system_content += "\n\n## USER MODE\nUser is NOT admin. Read-only + create/comment only. Admin actions will return permission error."
 
+        # Build messages
         messages = [{"role": "system", "content": system_content}]
-
         if thread_history:
+            # Separate system messages from conversation messages
             system_msgs = [m for m in thread_history if m.get("role") == "system"]
             convo_msgs = [m for m in thread_history if m.get("role") != "system"]
-
             if system_msgs:
                 messages.append(
                     {
@@ -174,7 +169,9 @@ class PollinationsClient:
                     }
                 )
 
+            # Add context label before conversation history
             if convo_msgs:
+                # Count messages by role for context
                 user_count = len([m for m in convo_msgs if m.get("role") == "user"])
                 bot_count = len([m for m in convo_msgs if m.get("role") == "assistant"])
 
@@ -190,9 +187,12 @@ class PollinationsClient:
                     }
                 )
 
+            # Add ALL conversation messages - OpenAI-compatible API can handle full history
+            # No artificial truncation - let bot AI see complete context
             for msg in convo_msgs:
                 messages.append(msg)
 
+            # Mark end of history clearly
             if convo_msgs:
                 messages.append(
                     {
@@ -205,6 +205,8 @@ class PollinationsClient:
                     }
                 )
 
+        # Build current user message with media (images and videos)
+        # NOTE: file_urls are NOT sent as media - they're mentioned in text for the AI to use web_scrape on
         file_urls = file_urls or []
         file_notice = ""
         if file_urls:
@@ -221,10 +223,11 @@ class PollinationsClient:
                     "text": f"[{discord_username}]: {user_message}{file_notice}",
                 }
             ]
+            # Add images and videos as image_url (model handles both)
             for url in (image_urls or [])[:10]:
                 content.append({"type": "image_url", "image_url": {"url": url}})
             for url in (video_urls or [])[:10]:
-                content.append({"type": "video_url", "video_url": {"url": url}})
+                content.append({"type": "image_url", "image_url": {"url": url}})
             messages.append({"role": "user", "content": content})
         else:
             messages.append(
@@ -234,12 +237,16 @@ class PollinationsClient:
                 }
             )
 
+        # Call API with tools (include admin tools if user is admin)
+        # Pass user_message for smart tool filtering
         result = await self._call_with_tools(
             messages,
             discord_username,
             is_admin=is_admin,
             user_message=user_message,
             tool_context=tool_context,
+            mode=mode,
+            api_params=api_params,
         )
         return result
 
@@ -247,44 +254,53 @@ class PollinationsClient:
         self,
         messages: list[dict],
         discord_username: str,
-        max_iterations: int = 20,
+        max_iterations: int = 20,  # Safety cap - most tasks finish in 3-8 calls
         is_admin: bool = False,
         user_message: str = "",
-        tool_context: Optional[dict] = None,
+        tool_context: dict | None = None,
+        mode: str = "discord",
+        api_params: dict | None = None,
     ) -> dict:
+        """Make API call with tool support and handle tool calls."""
+
         all_tool_calls = []
         all_tool_results = []
 
-        from .. import config
+        # Start with all tools, conditionally including code_search if embeddings enabled
+        from ..config import config
         from ..constants import get_tools_with_embeddings
 
         all_tools = get_tools_with_embeddings(
             GITHUB_TOOLS.copy(), config.local_embeddings_enabled, config.doc_embeddings_enabled
         )
 
-        all_tools = filter_admin_actions_from_tools(all_tools, is_admin)
+        if mode == "api":
+            all_tools = filter_api_tools(all_tools)
+        else:
+            all_tools = filter_admin_actions_from_tools(all_tools, is_admin)
+        tools = filter_tools_by_intent(user_message, all_tools, is_admin) if user_message else all_tools
 
-        tools = (
-            filter_tools_by_intent(user_message, all_tools, is_admin)
-            if user_message
-            else all_tools
-        )
-
+        # Log available tools for debugging
         all_tool_names = [t["function"]["name"] for t in all_tools]
         filtered_tool_names = [t["function"]["name"] for t in tools]
-        logger.info(
-            f"Available tools (is_admin={is_admin}): {', '.join(all_tool_names)}"
-        )
+        logger.info(f"Available tools (is_admin={is_admin}): {', '.join(all_tool_names)}")
         if len(tools) < len(all_tools):
             logger.info(f"Filtered tools to: {', '.join(filtered_tool_names)}")
 
         all_content_blocks = []
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         for iteration in range(max_iterations):
             start_time = time.time()
-            response = await self._call_api_with_tools(messages, tools=tools)
+            response = await self._call_api_with_tools(messages, tools=tools, mode=mode, api_params=api_params)
             api_time = time.time() - start_time
             logger.info(f"AI API call took {api_time:.1f}s (iteration {iteration + 1})")
+
+            # Accumulate token usage from each API call
+            resp_usage = response.get("usage") if response else None
+            if resp_usage:
+                for k in total_usage:
+                    total_usage[k] += resp_usage.get(k, 0)
 
             if not response:
                 return {
@@ -292,43 +308,45 @@ class PollinationsClient:
                     "tool_calls": all_tool_calls,
                     "tool_results": all_tool_results,
                     "content_blocks": all_content_blocks,
+                    "usage": total_usage,
                     "error": True,
                 }
 
+            # Collect content_blocks from every response (images from code_execution etc.)
             response_blocks = response.get("content_blocks", [])
             if response_blocks:
                 all_content_blocks.extend(response_blocks)
                 logger.info(f"Collected {len(response_blocks)} content block(s) from iteration {iteration + 1}")
 
+            # Check if model wants to call tools
             tool_calls = response.get("tool_calls", [])
 
             if not tool_calls:
+                # No tool calls, return the text response
                 return {
                     "response": response.get("content", ""),
                     "tool_calls": all_tool_calls,
                     "tool_results": all_tool_results,
                     "content_blocks": all_content_blocks,
+                    "usage": total_usage,
                 }
 
+            # Execute tool calls in parallel
+            # Strip API prefix from tool names for cleaner logging
             tool_names = [
-                (
-                    tc["function"]["name"].split(":")[-1]
-                    if ":" in tc["function"]["name"]
-                    else tc["function"]["name"]
-                )
+                (tc["function"]["name"].split(":")[-1] if ":" in tc["function"]["name"] else tc["function"]["name"])
                 for tc in tool_calls
             ]
             logger.info(f"Executing {len(tool_calls)} tool(s): {', '.join(tool_names)}")
             all_tool_calls.extend(tool_calls)
 
             start_time = time.time()
-            tool_results = await self._execute_tools_parallel(
-                tool_calls, discord_username, tool_context=tool_context
-            )
+            tool_results = await self._execute_tools_parallel(tool_calls, discord_username, tool_context=tool_context)
             tools_time = time.time() - start_time
             logger.info(f"Tools execution took {tools_time:.1f}s")
             all_tool_results.extend(tool_results)
 
+            # Add assistant message with tool calls
             messages.append(
                 {
                     "role": "assistant",
@@ -337,7 +355,19 @@ class PollinationsClient:
                 }
             )
 
+            # Add tool results
             for tool_call, result in zip(tool_calls, tool_results):
+                # Extract _image side-channel before serialization to AI
+                if isinstance(result, dict) and "_image" in result:
+                    image_data_url = result.pop("_image")
+                    all_content_blocks.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_data_url},
+                        }
+                    )
+
+                # Strip API prefix from tool name for consistency
                 tool_name = tool_call["function"]["name"]
                 if ":" in tool_name:
                     tool_name = tool_name.split(":")[-1]
@@ -346,28 +376,38 @@ class PollinationsClient:
                         "role": "tool",
                         "tool_call_id": tool_call.get("id", ""),
                         "name": tool_name,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content": _json_dumps(result),
                     }
                 )
 
-        final_response = await self._call_api_with_tools(messages, tools=None)
+        # Max iterations reached, get final response
+        final_response = await self._call_api_with_tools(messages, tools=None, mode=mode, api_params=api_params)
+        # Collect any remaining content_blocks from final response
         if final_response:
             final_blocks = final_response.get("content_blocks", [])
             if final_blocks:
                 all_content_blocks.extend(final_blocks)
+            resp_usage = final_response.get("usage")
+            if resp_usage:
+                for k in total_usage:
+                    total_usage[k] += resp_usage.get(k, 0)
         return {
             "response": final_response.get("content", "") if final_response else "",
             "tool_calls": all_tool_calls,
             "tool_results": all_tool_results,
             "content_blocks": all_content_blocks,
+            "usage": total_usage,
         }
 
     async def _execute_tools_parallel(
         self,
         tool_calls: list[dict],
         discord_username: str,
-        tool_context: Optional[dict] = None,
+        tool_context: dict | None = None,
     ) -> list[dict]:
+        """Execute multiple tool calls in parallel."""
+
+        # Actions that are safe to cache (read-only, no user-specific context)
         CACHEABLE_ACTIONS = {
             "get",
             "search",
@@ -382,20 +422,18 @@ class PollinationsClient:
 
         async def execute_single(tool_call: dict) -> dict:
             func_name = tool_call["function"]["name"]
+            # Strip API prefix if present (e.g., "default_api:github_issue" -> "github_issue")
             if ":" in func_name:
                 func_name = func_name.split(":")[-1]
             try:
-                args = json.loads(tool_call["function"]["arguments"])
-            except json.JSONDecodeError:
+                args = _json_loads(tool_call["function"]["arguments"])
+            except ValueError:
                 args = {}
 
+            # Check cache first - only for safe read operations
             action = args.get("action", "")
             is_cacheable = action in CACHEABLE_ACTIONS
-            cache_key = (
-                f"{func_name}:{json.dumps(args, sort_keys=True)}"
-                if is_cacheable
-                else None
-            )
+            cache_key = f"{func_name}:{_json_dumps(args)}" if is_cacheable else None
 
             if cache_key:
                 cached = self._cache.get(cache_key)
@@ -403,6 +441,7 @@ class PollinationsClient:
                     logger.debug(f"Cache hit for {func_name}:{action}")
                     return cached
 
+            # Get handler
             handler = self._tool_handlers.get(func_name)
             logger.debug(
                 f"Tool lookup: {func_name} -> handler={'found' if handler else 'NOT FOUND'}, registered tools: {list(self._tool_handlers.keys())}"
@@ -411,23 +450,23 @@ class PollinationsClient:
                 logger.warning(f"No handler for tool: {func_name}")
                 return {"error": f"Unknown tool: {func_name}"}
 
+            # Add discord_username for user-specific tools
             if func_name == "search_user_issues" and "discord_username" not in args:
                 args["discord_username"] = discord_username
 
+            # Inject tool context if provided (contains user info, channel, admin status, etc.)
             if tool_context:
                 args["_context"] = tool_context
 
             try:
-                logger.info(
-                    f"Calling tool {func_name} with action={args.get('action', 'N/A')}"
-                )
+                logger.info(f"Calling tool {func_name} with action={args.get('action', 'N/A')}")
                 result = await handler(**args)
+                # Log result summary
                 if result.get("error"):
-                    logger.warning(
-                        f"Tool {func_name} returned error: {result.get('error')[:200]}"
-                    )
+                    logger.warning(f"Tool {func_name} returned error: {result.get('error')[:200]}")
                 else:
                     logger.info(f"Tool {func_name} succeeded")
+                # Cache successful read-only results
                 if cache_key and not result.get("error"):
                     self._cache.set(cache_key, result)
                 return result
@@ -435,29 +474,53 @@ class PollinationsClient:
                 logger.error(f"Tool {func_name} failed: {e}")
                 return {"error": str(e)}
 
+        # Run all tool calls in parallel
         tasks = [execute_single(tc) for tc in tool_calls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        return [
-            r if not isinstance(r, Exception) else {"error": str(r)} for r in results
-        ]
+        # Convert exceptions to error dicts
+        return [r if not isinstance(r, Exception) else {"error": str(r)} for r in results]
 
     async def _call_api_with_tools(
         self,
         messages: list[dict],
-        tools: Optional[list] = None,
+        tools: list | None = None,
         timeout: int = API_TIMEOUT,
-    ) -> Optional[dict]:
+        mode: str = "discord",
+        api_params: dict | None = None,
+    ) -> dict | None:
+        """Make API call to Pollinations with tool definitions.
+
+        Includes:
+        - Random seed parameter (0 to int32 max) for each request
+        - 3 retry attempts with 5s delay between retries
+        - New random seed for each retry attempt
+        - Pass-through of OpenAI generation params (temperature, max_tokens, etc.)
+        """
+        # API mode: MUST use the user's passed-through key, never the bot's internal token.
+        # Discord mode: uses the bot's own token (no override set).
+        # _auth_override stores the full "Bearer xxx" header, while
+        # config.pollinations_token is the raw token — hence the f"Bearer ..." fallback.
+        override = _auth_override.get()
+        if mode == "api":
+            if not override:
+                logger.error("API mode request with no auth override — refusing to use bot token")
+                return None
+            auth_token = override
+        else:
+            auth_token = override or f"Bearer {config.pollinations_token}"
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.pollinations_token}",
+            "Authorization": auth_token,
         }
 
         url = f"{POLLINATIONS_API_BASE}/v1/chat/completions"
         last_error = None
 
         for attempt in range(MAX_RETRIES):
-            seed = random.randint(0, MAX_SEED)
+            # Use caller's seed if provided (default 42), otherwise random per attempt
+            caller_seed = (api_params or {}).get("seed") if api_params else None
+            seed = caller_seed if caller_seed is not None else 42
 
             payload = {
                 "model": config.pollinations_model,
@@ -465,15 +528,19 @@ class PollinationsClient:
                 "seed": seed,
             }
 
+            # Merge caller-provided OpenAI params (temperature, max_tokens, etc.)
+            if api_params:
+                for k, v in api_params.items():
+                    if k != "seed" and v is not None:
+                        payload[k] = v
+
             if tools:
                 payload["tools"] = tools
                 payload["tool_choice"] = "auto"
 
             try:
                 session = await self.get_session()
-                logger.debug(
-                    f"API attempt {attempt + 1}/{MAX_RETRIES} with seed {seed}"
-                )
+                logger.debug(f"API attempt {attempt + 1}/{MAX_RETRIES} with seed {seed}")
 
                 async with session.post(
                     url,
@@ -484,11 +551,11 @@ class PollinationsClient:
                     if response.status == 200:
                         data = await response.json()
                         message = data["choices"][0]["message"]
+                        # Log raw tool calls from API to debug prefix issue
                         if message.get("tool_calls"):
-                            raw_names = [
-                                tc["function"]["name"] for tc in message["tool_calls"]
-                            ]
+                            raw_names = [tc["function"]["name"] for tc in message["tool_calls"]]
                             logger.info(f"API returned tool calls (raw): {raw_names}")
+                        # Extract content_blocks (used by code_execution for images)
                         content_blocks = message.get("content_blocks", [])
                         if content_blocks:
                             logger.info(f"API returned {len(content_blocks)} content block(s)")
@@ -496,15 +563,17 @@ class PollinationsClient:
                             "content": message.get("content", ""),
                             "tool_calls": message.get("tool_calls", []),
                             "content_blocks": content_blocks,
+                            "usage": data.get("usage"),
                         }
                     else:
                         error_text = await response.text()
                         last_error = f"HTTP {response.status}: {error_text[:100]}"
-                        logger.warning(
-                            f"Pollinations API error (attempt {attempt + 1}): {last_error}"
-                        )
+                        logger.warning(f"Pollinations API error (attempt {attempt + 1}): {last_error}")
+                        # In API mode, propagate auth errors immediately — don't retry
+                        if mode == "api" and response.status in (401, 403):
+                            raise UpstreamAuthError(response.status, error_text)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 last_error = f"Timeout after {timeout}s"
                 logger.warning(f"API timeout (attempt {attempt + 1})")
             except aiohttp.ClientError as e:
@@ -514,10 +583,12 @@ class PollinationsClient:
                 last_error = f"Error: {e}"
                 logger.warning(f"API error (attempt {attempt + 1}): {e}")
 
+            # Wait before retry (except on last attempt)
             if attempt < MAX_RETRIES - 1:
                 logger.info(f"Retrying in {RETRY_DELAY}s...")
                 await asyncio.sleep(RETRY_DELAY)
 
+        # All retries failed
         logger.error(f"All {MAX_RETRIES} API attempts failed. Last error: {last_error}")
         return None
 
@@ -525,10 +596,11 @@ class PollinationsClient:
         self,
         user_message: str,
         discord_username: str,
-        thread_history: Optional[list[dict]] = None,
-        image_urls: Optional[list[str]] = None,
-        context_data: Optional[dict] = None,
-    ) -> Optional[dict]:
+        thread_history: list[dict] | None = None,
+        image_urls: list[str] | None = None,
+        context_data: dict | None = None,
+    ) -> dict | None:
+        """Legacy method - wraps new tool-based processing."""
         result = await self.process_with_tools(
             user_message=user_message,
             discord_username=discord_username,
@@ -536,25 +608,23 @@ class PollinationsClient:
             image_urls=image_urls,
         )
 
+        # Convert to legacy format
         if result.get("error"):
             return None
 
         return {"action": "respond", "message": result["response"]}
 
-    async def format_search_results(
-        self, user_query: str, issues: list[dict], discord_username: str
-    ) -> Optional[dict]:
+    async def format_search_results(self, user_query: str, issues: list[dict], discord_username: str) -> dict | None:
+        """Format search results (now handled by AI after tool call)."""
         if not issues:
             return {
                 "action": "respond",
                 "message": "No issues found matching your search.",
             }
 
+        # Format for display
         issues_text = "\n".join(
-            [
-                f"- **#{i['number']}**: {i['title']} ({i['state']}) - {i['url']}"
-                for i in issues[:10]
-            ]
+            [f"- **#{i['number']}**: {i['title']} ({i['state']}) - {i['url']}" for i in issues[:10]]
         )
 
         return {
@@ -562,9 +632,8 @@ class PollinationsClient:
             "message": f"Found {len(issues)} issue(s):\n{issues_text}",
         }
 
-    async def format_issue_detail(
-        self, issue: dict, comments: Optional[list[dict]] = None
-    ) -> Optional[dict]:
+    async def format_issue_detail(self, issue: dict, comments: list[dict] | None = None) -> dict | None:
+        """Format issue detail (now handled by AI after tool call)."""
         state_emoji = "🟢" if issue["state"] == "open" else "🔴"
 
         msg = f"{state_emoji} **#{issue['number']}: {issue['title']}**\n"
@@ -613,15 +682,20 @@ class PollinationsClient:
         meaningful = [w for w in words if w not in stop_words and len(w) > 2][:5]
         return " ".join(meaningful) if meaningful else "general"
 
-    async def format_notification(
-        self, issue: dict, changes: list[dict], issue_url: str
-    ) -> str:
-        changes_text = "\n".join(
-            [
-                f"- Type: {c['type']}, Data: {json.dumps(c.get('data', {}), ensure_ascii=False)}"
-                for c in changes
-            ]
-        )
+    async def format_notification(self, issue: dict, changes: list[dict], issue_url: str) -> str:
+        """
+        Use AI to generate a beautifully formatted notification message.
+
+        Args:
+            issue: Issue data (number, title, state, labels)
+            changes: List of change dicts with type and data
+            issue_url: Full URL to the issue
+
+        Returns:
+            Formatted Discord notification message with emojis
+        """
+        # Build context for AI
+        changes_text = "\n".join([f"- Type: {c['type']}, Data: {_json_dumps(c.get('data', {}))}" for c in changes])
 
         system_prompt = """You are a notification formatter for a Discord bot that watches GitHub issues.
 Format notifications beautifully for Discord with:
@@ -635,16 +709,13 @@ Format notifications beautifully for Discord with:
 Output ONLY the formatted message, nothing else."""
 
         user_prompt = f"""Format this GitHub issue update notification:
-
-Issue: #{issue['number']} - {issue['title']}
-Current State: {issue['state']}
-Labels: {', '.join(issue.get('labels', [])) or 'none'}
-URL: {issue_url}
-
-Changes detected:
-{changes_text}
-
-Generate a beautiful, concise Discord notification."""
+        Issue: #{issue["number"]} - {issue["title"]}
+        Current State: {issue["state"]}
+        Labels: {", ".join(issue.get("labels", [])) or "none"}
+        URL: {issue_url}
+        Changes detected:
+        {changes_text}
+        Generate a beautiful, concise Discord notification."""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -658,11 +729,10 @@ Generate a beautiful, concise Discord notification."""
         except Exception as e:
             logger.error(f"Failed to format notification with AI: {e}")
 
+        # Fallback to simple format if AI fails
         return self._format_notification_fallback(issue, changes, issue_url)
 
-    def _format_notification_fallback(
-        self, issue: dict, changes: list[dict], issue_url: str
-    ) -> str:
+    def _format_notification_fallback(self, issue: dict, changes: list[dict], issue_url: str) -> str:
         emoji_map = {
             "closed": "🔒",
             "reopened": "🔓",
@@ -687,28 +757,45 @@ Generate a beautiful, concise Discord notification."""
                 parts.append(f"{emoji} **{author}** commented:\n> {body}")
             elif change_type == "labels_added":
                 labels = data.get("labels", [])
-                parts.append(
-                    f"{emoji} Labels added: {', '.join(f'`{l}`' for l in labels)}"
-                )
+                parts.append(f"{emoji} Labels added: {', '.join(f'`{l}`' for l in labels)}")
             elif change_type == "labels_removed":
                 labels = data.get("labels", [])
-                parts.append(
-                    f"{emoji} Labels removed: {', '.join(f'`{l}`' for l in labels)}"
-                )
+                parts.append(f"{emoji} Labels removed: {', '.join(f'`{l}`' for l in labels)}")
 
         changes_str = "\n".join(parts) if parts else "Update detected"
 
-        return (
-            f"**[#{issue['number']}: {issue['title']}](<{issue_url}>)**\n"
-            f"{changes_str}"
-        )
+        return f"**[#{issue['number']}: {issue['title']}](<{issue_url}>)**\n{changes_str}"
 
 
+# Singleton instance
 pollinations_client = PollinationsClient()
 
 
-async def web_search_handler(query: str, **kwargs) -> dict:
-    model = "perplexity-reasoning"
+# =============================================================================
+# WEB SEARCH HANDLER - Uses Perplexity models via Pollinations API
+# =============================================================================
+
+
+async def web_search_handler(query: str, model: str = "perplexity-fast", **kwargs) -> dict:
+    """
+    Handle web_search tool calls using various search-enabled models.
+
+    Supported models:
+    - gemini-search: Gemini 2.0 Flash with Google Search (fast, factual)
+    - perplexity-fast: Perplexity Sonar (balanced, citations)
+    - perplexity-reasoning: Perplexity Sonar Reasoning (deep analysis)
+
+    Args:
+        query: The search query
+        model: Search model to use (default: perplexity-fast)
+
+    Returns:
+        Dict with search results or error
+    """
+    # Validate model
+    valid_models = ["gemini-search", "perplexity-fast", "perplexity-reasoning"]
+    if model not in valid_models:
+        model = "perplexity-fast"  # Default fallback
 
     messages = [
         {
@@ -741,12 +828,10 @@ async def web_search_handler(query: str, **kwargs) -> dict:
                 return {"result": content, "model": model, "query": query}
             else:
                 error_text = await response.text()
-                logger.error(
-                    f"Web search API error: {response.status} - {error_text[:200]}"
-                )
+                logger.error(f"Web search API error: {response.status} - {error_text[:200]}")
                 return {"error": f"Search failed: HTTP {response.status}"}
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Web search timeout")
         return {"error": "Search timed out. Try a simpler query."}
     except Exception as e:
@@ -755,6 +840,18 @@ async def web_search_handler(query: str, **kwargs) -> dict:
 
 
 async def web_handler(query: str, **kwargs) -> dict:
+    """
+    Handle web tool calls using nomnom model for deep research.
+
+    nomnom combines search, scrape, crawl, and code execution for complex tasks.
+    Use sparingly - it's powerful but slower and more expensive than simple tools.
+
+    Args:
+        query: Natural language request describing what to research/analyze
+
+    Returns:
+        Dict with research results, including any generated images
+    """
     messages = [
         {
             "role": "system",
@@ -769,7 +866,7 @@ async def web_handler(query: str, **kwargs) -> dict:
     }
 
     payload = {
-        "model": "nomnom",
+        "model": "perplexity-reasoning",
         "messages": messages,
     }
 
@@ -777,14 +874,14 @@ async def web_handler(query: str, **kwargs) -> dict:
         session = await pollinations_client.get_session()
         url = f"{POLLINATIONS_API_BASE}/v1/chat/completions"
 
-        async with session.post(
-            url, json=payload, headers=headers
-        ) as response:
+        # nomnom handles complex research - no timeout limit
+        async with session.post(url, json=payload, headers=headers) as response:
             if response.status == 200:
                 data = await response.json()
                 message = data["choices"][0]["message"]
                 content = message.get("content", "")
 
+                # Extract image URLs from content_blocks (nomnom can generate images)
                 content_blocks = message.get("content_blocks", [])
                 image_urls = []
                 for block in content_blocks:
@@ -800,12 +897,10 @@ async def web_handler(query: str, **kwargs) -> dict:
                 return result
             else:
                 error_text = await response.text()
-                logger.error(
-                    f"Web (nomnom) API error: {response.status} - {error_text[:200]}"
-                )
+                logger.error(f"Web (nomnom) API error: {response.status} - {error_text[:200]}")
                 return {"error": f"Research failed: HTTP {response.status}"}
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("Web (nomnom) timeout")
         return {"error": "Research timed out. Try a simpler query or use web_search instead."}
     except Exception as e:

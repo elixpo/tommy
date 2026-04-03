@@ -1,12 +1,5 @@
-"""
-Professional logging configuration for meaw Bot.
-
-Clean, minimal logs without colors (VPS compatible).
-Format: TIME | LEVEL | MODULE | message
-"""
 import logging
 import sys
-from typing import Optional
 
 
 class CleanFormatter(logging.Formatter):
@@ -21,13 +14,6 @@ class CleanFormatter(logging.Formatter):
         "src.services.subscriptions": "subs",
         "src.services.webhook_server": "webhook",
         "src.services.embeddings": "embed",
-        "src.services.code_agent.sandbox": "sandbox",
-        "src.services.code_agent.claude_code_agent": "agent",
-        "src.services.code_agent.embed_builder": "discord",
-        "src.services.code_agent.tools.polly_agent": "meaw",
-        "src.services.code_agent.models": "models",
-        "src.services.code_agent.output_summarizer": "summary",
-        "src.services.code_agent.session_embeddings": "sess-emb",
         "src.context.manager": "context",
         "__main__": "main",
     }
@@ -65,7 +51,7 @@ class SectionLogger:
             self.logger.info("─" * 50)
 
 
-def setup_logging(level: int = logging.INFO, debug_modules: Optional[list] = None):
+def setup_logging(level: int = logging.INFO, debug_modules: list | None = None):
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(CleanFormatter())
     root = logging.getLogger()
