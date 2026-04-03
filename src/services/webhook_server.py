@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Optional
 from aiohttp import web
-from ..config import config
+from .. import config
 
 logger = logging.getLogger(__name__)
 

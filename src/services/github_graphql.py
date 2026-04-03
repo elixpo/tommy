@@ -13,7 +13,7 @@ import time
 from typing import Optional, Any
 import aiohttp
 
-from ..config import config
+from .. import config
 from . import github_auth
 
 logger = logging.getLogger(__name__)
@@ -54,11 +54,11 @@ class GitHubGraphQL:
 
     @property
     def owner(self) -> str:
-        return config.github_repo.split("/")[0]
+        return config.github_repo().split("/")[0]
 
     @property
     def repo(self) -> str:
-        return config.github_repo.split("/")[1]
+        return config.github_repo().split("/")[1]
 
     async def get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -247,7 +247,7 @@ class GitHubGraphQL:
         elif state == "closed":
             state_filter = "is:closed"
 
-        search_query = f"repo:{config.github_repo} is:issue {state_filter} {keywords}"
+        search_query = f"repo:{config.github_repo()} is:issue {state_filter} {keywords}"
 
         query = """
         query SearchIssuesFull($query: String!, $limit: Int!) {
@@ -372,7 +372,7 @@ class GitHubGraphQL:
         return results
 
     async def find_similar_issues(self, keywords: str, limit: int = 5) -> list[dict]:
-        search_query = f"repo:{config.github_repo} is:issue is:open {keywords}"
+        search_query = f"repo:{config.github_repo()} is:issue is:open {keywords}"
 
         query = """
         query FindSimilar($query: String!, $limit: Int!) {
@@ -422,7 +422,7 @@ class GitHubGraphQL:
         elif state == "closed":
             state_filter = "is:closed"
 
-        search_query = f'repo:{config.github_repo} is:issue {state_filter} "**Author:**" "{discord_username}"'
+        search_query = f'repo:{config.github_repo()} is:issue {state_filter} "**Author:**" "{discord_username}"'
 
         return await self.search_issues_full(
             keywords=f'"**Author:**" "{discord_username}"', state=state, limit=limit

@@ -8,7 +8,7 @@ import re
 from typing import Optional, Union
 import discord
 from discord.ext import commands, tasks
-from .config import config
+from . import config
 from .context import session_manager, ConversationSession
 from .services.github import github_manager, TOOL_HANDLERS
 from .services.github_graphql import github_graphql
@@ -600,7 +600,7 @@ class PollyBot(commands.Bot):
     async def setup_hook(self):
         """Called when the bot is starting up."""
         # Initialize GitHub App auth if configured
-        if config.use_github_app:
+        if config.use_github_app():
             init_github_app(
                 app_id=config.github_app_id,
                 private_key=config.github_private_key,

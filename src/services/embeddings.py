@@ -385,7 +385,7 @@ async def search_code(query: str, top_k: int = 5) -> list[dict]:
 
 
 async def pull_and_update():
-    from ..config import config
+    from .. import config
 
     async with _update_lock:
         logger.info("Updating repository and embeddings...")
@@ -437,7 +437,7 @@ async def schedule_update():
 
 
 async def initialize():
-    from ..config import config
+    from .. import config
 
     if not config.local_embeddings_enabled:
         logger.info("Local embeddings disabled")

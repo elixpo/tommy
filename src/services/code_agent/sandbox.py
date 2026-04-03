@@ -470,7 +470,7 @@ sed -i -e :a -e '/^\\n*$/{$d;N;ba' -e '}' "$COMMIT_MSG_FILE"
         logger.info("Commit hook setup to strip Claude attribution")
 
     async def _write_ccr_config(self):
-        from ...config import config as app_config
+        from ... import config as app_config
 
         ccr_config = {
             "LOG": True,

@@ -1,4 +1,3 @@
-import json
 import logging
 import sys
 from pathlib import Path
@@ -13,138 +12,130 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
+# ============================================================================
+# HARDCODED CONFIGURATION VARIABLES
+# ============================================================================
 
-def load_config_json() -> dict:
-    config_path = PROJECT_ROOT / "config.json"
-    if not config_path.exists():
-        logger.warning(f"config.json not found at {config_path}, using defaults")
-        return {}
+# Bot Configuration
+bot_name = "meaw"
+default_repo = "elixpo/elixpo_chapter"
 
-    try:
-        with open(config_path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load config.json: {e}")
-        return {}
+# Discord Configuration
+admin_role_ids: List[int] = []  # Set in .env if needed
+discord_token = os.getenv("DISCORD_TOKEN", "")
 
+# GitHub Configuration
+github_bot_username = "meaw-bot"
+github_admin_users: List[str] = ["admin_github_username1", "admin_github_username2"]
+whitelisted_repos: List[str] = ["elixpo/elixpo_chapter"]
+github_admin_only_mentions = True
+github_token = os.getenv("POLLI_PAT", "")
+github_app_id = os.getenv("GITHUB_APP_ID", "")
+github_installation_id = os.getenv("GITHUB_INSTALLATION_ID", "")
+github_project_pat = os.getenv("GITHUB_PROJECT_PAT", "")
 
-class Config:
-    def __init__(self):
-        cfg = load_config_json()
+# Load GitHub Private Key
+def _load_private_key() -> str:
+    key_value = os.getenv("GITHUB_PRIVATE_KEY", "")
+    if not key_value:
+        return ""
 
-        bot_cfg = cfg.get("bot", {})
-        self.bot_name = bot_cfg.get("name", "meaw")
-        self.default_repo = bot_cfg.get("default_repo", "pollinations/pollinations")
-        discord_cfg = cfg.get("discord", {})
-        self.admin_role_ids: List[int] = discord_cfg.get("admin_role_ids", [])
-        self.discord_token = os.getenv("DISCORD_TOKEN")
-        github_cfg = cfg.get("github", {})
-        self.github_bot_username = github_cfg.get("bot_username", "pollinations-ci")
-        self.github_admin_users: List[str] = [u.lower() for u in github_cfg.get("admin_users", [])]
-        self.whitelisted_repos: List[str] = [r.lower() for r in github_cfg.get("whitelisted_repos", [])]
-        self.github_admin_only_mentions: bool = github_cfg.get("admin_only_mentions", False)
-        self.github_token = os.getenv("POLLI_PAT", "")
-        self.github_app_id = os.getenv("GITHUB_APP_ID", "")
-        self.github_installation_id = os.getenv("GITHUB_INSTALLATION_ID", "")
-        self.github_private_key = self._load_private_key()
-        self.github_project_pat = os.getenv("GITHUB_PROJECT_PAT", "")
-        webhook_cfg = cfg.get("webhook", {})
-        self.webhook_port = webhook_cfg.get("port", 8002)
-        self.webhook_enabled = webhook_cfg.get("enabled", True)
-        self.webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
-        ai_cfg = cfg.get("ai", {})
-        self.pollinations_model = ai_cfg.get("model", "gemini-large")
-        self.fallback_model = ai_cfg.get("fallback_model", "openai-large")
-        self.pollinations_token = os.getenv("POLLINATIONS_TOKEN", "")
-        features_cfg = cfg.get("features", {})
-        self.sandbox_enabled = features_cfg.get("sandbox_enabled", False)
-        self.local_embeddings_enabled = features_cfg.get("local_embeddings_enabled", False)
-        self.embeddings_repo = features_cfg.get("embeddings_repo", "pollinations/pollinations")
-        self.doc_embeddings_enabled = features_cfg.get("doc_embeddings_enabled", True)
-        self.doc_sites = features_cfg.get("doc_sites", [
-            "https_link_to_site1",
-            "https_link_to_site2",
-            "https_link_to_site3...",
-        ])
+    key_path = Path(key_value)
+    if not key_path.is_absolute():
+        key_path = PROJECT_ROOT / key_value
 
-    def _load_private_key(self) -> str:
-        key_value = os.getenv("GITHUB_PRIVATE_KEY", "")
-        if not key_value:
+    if key_path.is_file():
+        try:
+            content = key_path.read_text()
+            logger.info(f"Loaded private key from {key_path}")
+            return content
+        except Exception as e:
+            logger.error(f"Failed to read private key file {key_path}: {e}")
             return ""
 
-        key_path = Path(key_value)
-        if not key_path.is_absolute():
-            key_path = PROJECT_ROOT / key_value
+    return key_value.replace("\\n", "\n")
 
-        if key_path.is_file():
-            try:
-                content = key_path.read_text()
-                logger.info(f"Loaded private key from {key_path}")
-                return content
-            except Exception as e:
-                logger.error(f"Failed to read private key file {key_path}: {e}")
-                return ""
+github_private_key = _load_private_key()
 
-        return key_value.replace("\\n", "\n")
+# Webhook Configuration
+webhook_port = 8002
+webhook_enabled = True
+webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 
-    @property
-    def github_repo(self) -> str:
-        return self.default_repo
+# AI Model Configuration
+pollinations_model = "kimi"
+fallback_model = "openai"
+pollinations_token = os.getenv("POLLINATIONS_TOKEN", "")
 
-    @property
-    def use_github_app(self) -> bool:
-        return bool(
-            self.github_app_id and
-            self.github_installation_id and
-            self.github_private_key
+# Features Configuration
+sandbox_enabled = True
+local_embeddings_enabled = True
+embeddings_repo = "elixpo/elixpo_chapter"
+doc_embeddings_enabled = True
+doc_sites = [
+    "https://enter.pollinations.ai",
+    "https://kpi.myceli.ai",
+    "https://gsoc.pollinations.ai",
+]
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def github_repo() -> str:
+    """Get the configured GitHub repository."""
+    return default_repo
+
+def use_github_app() -> bool:
+    """Check if GitHub App authentication is configured."""
+    return bool(github_app_id and github_installation_id and github_private_key)
+
+def has_project_access() -> bool:
+    """Check if GitHub Project V2 access is available."""
+    return bool(github_project_pat)
+
+def is_github_admin(username: str) -> bool:
+    """Check if a user is a GitHub admin."""
+    if not username:
+        return False
+    return username.lower() in [u.lower() for u in github_admin_users]
+
+def is_repo_whitelisted(repo: str) -> bool:
+    """Check if a repository is whitelisted."""
+    if not whitelisted_repos:
+        return True
+    return repo.lower() in [r.lower() for r in whitelisted_repos]
+
+def validate() -> bool:
+    """Validate configuration and exit if errors found."""
+    errors = []
+
+    if not discord_token:
+        errors.append("DISCORD_TOKEN is required in .env")
+
+    if not use_github_app() and not github_token:
+        errors.append(
+            "GitHub auth required in .env. Either:\n"
+            "  - Set GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_PRIVATE_KEY\n"
+            "  - Or set POLLI_PAT"
         )
 
-    @property
-    def has_project_access(self) -> bool:
-        return bool(self.github_project_pat)
+    if errors:
+        logger.error("Configuration errors:")
+        for error in errors:
+            logger.error(f"  - {error}")
+        logger.error("\nCheck your .env file")
+        sys.exit(1)
 
-    def is_github_admin(self, username: str) -> bool:
-        if not username:
-            return False
-        return username.lower() in self.github_admin_users
+    logger.info(f"Bot: {bot_name}")
+    logger.info(f"Default repo: {default_repo}")
+    logger.info(f"GitHub auth: {'App' if use_github_app() else 'PAT'}")
+    logger.info(f"Webhook: {'enabled' if webhook_enabled else 'disabled'} on port {webhook_port}")
+    logger.info(f"AI model: {pollinations_model}")
+    logger.info(f"GitHub admins: {len(github_admin_users)} users")
+    logger.info(f"Whitelisted repos: {len(whitelisted_repos) if whitelisted_repos else 'all'}")
 
-    def is_repo_whitelisted(self, repo: str) -> bool:
-        if not self.whitelisted_repos:
-            return True
-        return repo.lower() in self.whitelisted_repos
+    if has_project_access():
+        logger.info("ProjectV2 access: enabled")
 
-    def validate(self) -> bool:
-        errors = []
-
-        if not self.discord_token:
-            errors.append("DISCORD_TOKEN is required in .env")
-
-        if not self.use_github_app and not self.github_token:
-            errors.append(
-                "GitHub auth required in .env. Either:\n"
-                "  - Set GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_PRIVATE_KEY\n"
-                "  - Or set POLLI_PAT"
-            )
-
-        if errors:
-            logger.error("Configuration errors:")
-            for error in errors:
-                logger.error(f"  - {error}")
-            logger.error("\nCheck your .env file and config.json")
-            sys.exit(1)
-
-        logger.info(f"Bot: {self.bot_name}")
-        logger.info(f"Default repo: {self.default_repo}")
-        logger.info(f"GitHub auth: {'App' if self.use_github_app else 'PAT'}")
-        logger.info(f"Webhook: {'enabled' if self.webhook_enabled else 'disabled'} on port {self.webhook_port}")
-        logger.info(f"AI model: {self.pollinations_model}")
-        logger.info(f"GitHub admins: {len(self.github_admin_users)} users")
-        logger.info(f"Whitelisted repos: {len(self.whitelisted_repos) if self.whitelisted_repos else 'all'}")
-
-        if self.has_project_access:
-            logger.info("ProjectV2 access: enabled")
-
-        return True
-
-
-config = Config()
+    return True

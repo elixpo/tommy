@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 import aiohttp
 
-from ...config import config
+from ... import config
 from ...constants import POLLINATIONS_API_BASE
 
 logger = logging.getLogger(__name__)

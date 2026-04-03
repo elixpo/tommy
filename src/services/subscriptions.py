@@ -20,7 +20,7 @@ from typing import Optional
 
 import discord
 
-from ..config import config
+from .. import config
 
 logger = logging.getLogger(__name__)
 
@@ -378,7 +378,7 @@ class IssueNotifier:
         from .pollinations import pollinations_client
 
         issue_number = issue["number"]
-        issue_url = issue.get("url", f"https://github.com/{config.github_repo}/issues/{issue_number}")
+        issue_url = issue.get("url", f"https://github.com/{config.github_repo()}/issues/{issue_number}")
 
         message = await pollinations_client.format_notification(
             issue=issue,

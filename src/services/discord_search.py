@@ -15,7 +15,7 @@ from typing import Optional, List, Dict, Any, Tuple, Union
 from datetime import datetime, timezone
 import discord
 
-from ..config import config
+from .. import config
 
 logger = logging.getLogger(__name__)
 

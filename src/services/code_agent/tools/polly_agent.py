@@ -1005,9 +1005,9 @@ async def _handle_code_task(
 
 async def _get_github_token() -> str:
     from ...github_auth import github_app_auth
-    from ....config import config
+    from .... import config
 
-    if config.use_github_app and github_app_auth:
+    if config.use_github_app() and github_app_auth:
         try:
             token = await github_app_auth.get_token()
             if token:

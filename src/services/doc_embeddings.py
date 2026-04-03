@@ -420,7 +420,7 @@ async def search_docs(query: str, top_k: int = 5) -> list[dict]:
 
 async def update_all_sites(sites: Optional[list[str]] = None):
     if sites is None:
-        from ..config import config
+        from .. import config
 
         sites = config.doc_sites if hasattr(config, "doc_sites") else DEFAULT_DOC_SITES
 
@@ -440,7 +440,7 @@ async def update_all_sites(sites: Optional[list[str]] = None):
 
 
 async def initialize():
-    from ..config import config
+    from .. import config
 
     if not config.doc_embeddings_enabled:
         logger.info("Documentation embeddings disabled")

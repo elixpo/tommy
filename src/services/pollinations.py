@@ -12,7 +12,7 @@ MAX_SEED = 2**31 - 1
 
 import aiohttp
 
-from ..config import config
+from .. import config
 from ..constants import (
     POLLINATIONS_API_BASE,
     API_TIMEOUT,
@@ -255,7 +255,7 @@ class PollinationsClient:
         all_tool_calls = []
         all_tool_results = []
 
-        from ..config import config
+        from .. import config
         from ..constants import get_tools_with_embeddings
 
         all_tools = get_tools_with_embeddings(

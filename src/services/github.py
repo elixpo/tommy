@@ -9,7 +9,7 @@ import aiohttp
 from typing import Optional
 from urllib.parse import quote
 
-from ..config import config
+from .. import config
 from ..constants import API_TIMEOUT, MAX_ERROR_LENGTH
 from .github_graphql import github_graphql
 from . import github_auth
@@ -24,7 +24,7 @@ class GitHubManager:
 
     @property
     def repo(self) -> str:
-        return config.github_repo
+        return config.github_repo()
 
     async def get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -84,7 +84,7 @@ class GitHubManager:
         if not self._has_auth():
             return []
 
-        query_parts = [f"repo:{config.github_repo}", "is:issue"]
+        query_parts = [f"repo:{config.github_repo()}", "is:issue"]
 
         if keywords.strip():
             query_parts.insert(0, keywords)
@@ -139,7 +139,7 @@ class GitHubManager:
         if not self._has_auth():
             return None
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}"
 
         try:
             session = await self.get_session()
@@ -164,7 +164,7 @@ class GitHubManager:
         if not self._has_auth():
             return []
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}/comments?per_page={limit}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}/comments?per_page={limit}"
 
         try:
             session = await self.get_session()
@@ -207,7 +207,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        if not config.github_repo:
+        if not config.github_repo():
             return {"success": False, "error": "GitHub repository not configured"}
 
         body = self._build_issue_body(
@@ -219,7 +219,7 @@ class GitHubManager:
             message_url=message_url,
         )
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues"
 
         payload = {"title": title, "body": body}
 
@@ -262,7 +262,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}/comments"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}/comments"
 
         body = f"{comment}\n\n---\n**From:** `{author}`\n\n*Added via Discord*"
 
@@ -278,7 +278,7 @@ class GitHubManager:
                     logger.info(f"Comment added to issue #{issue_number}")
                     return {
                         "success": True,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                     }
                 elif response.status == 403:
                     error_text = await response.text()
@@ -306,7 +306,7 @@ class GitHubManager:
             return {"success": False, "error": str(e)}
 
     async def _get_comment(self, comment_id: int) -> dict | None:
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/comments/{comment_id}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/comments/{comment_id}"
         try:
             session = await self.get_session()
             async with session.get(
@@ -331,7 +331,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/comments/{comment_id}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/comments/{comment_id}"
 
         if requester:
             comment = await self._get_comment(comment_id)
@@ -381,7 +381,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/comments/{comment_id}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/comments/{comment_id}"
 
         if requester:
             comment = await self._get_comment(comment_id)
@@ -435,7 +435,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}"
 
         state_reason = "completed" if reason == "completed" else "not_planned"
 
@@ -456,7 +456,7 @@ class GitHubManager:
                     return {
                         "success": True,
                         "issue_number": issue_number,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                     }
                 else:
                     return {
@@ -473,7 +473,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}"
 
         try:
             session = await self.get_session()
@@ -492,7 +492,7 @@ class GitHubManager:
                     return {
                         "success": True,
                         "issue_number": issue_number,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                     }
                 else:
                     return {
@@ -515,7 +515,7 @@ class GitHubManager:
                 "error": "Nothing to update - provide title or body",
             }
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}"
 
         payload = {}
         if title:
@@ -536,7 +536,7 @@ class GitHubManager:
                     return {
                         "success": True,
                         "issue_number": issue_number,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                         "updated": list(payload.keys()),
                     }
                 else:
@@ -552,7 +552,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}/labels"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}/labels"
 
         try:
             session = await self.get_session()
@@ -568,7 +568,7 @@ class GitHubManager:
                         "success": True,
                         "issue_number": issue_number,
                         "labels_added": labels,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                     }
                 else:
                     return {
@@ -584,7 +584,7 @@ class GitHubManager:
             return {"success": False, "error": "GitHub token not configured"}
 
         async def remove_single_label(label: str) -> tuple[str, bool, str]:
-            url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}/labels/{label}"
+            url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}/labels/{label}"
             try:
                 session = await self.get_session()
                 async with session.delete(
@@ -615,7 +615,7 @@ class GitHubManager:
                 "issue_number": issue_number,
                 "labels_removed": removed,
                 "errors": errors if errors else None,
-                "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
             }
         except Exception as e:
             logger.error(f"Error removing labels: {e}")
@@ -625,7 +625,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}/assignees"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}/assignees"
 
         try:
             session = await self.get_session()
@@ -641,7 +641,7 @@ class GitHubManager:
                         "success": True,
                         "issue_number": issue_number,
                         "assignees_added": assignees,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                     }
                 elif response.status == 403:
                     return {
@@ -667,7 +667,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}/assignees"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}/assignees"
 
         try:
             session = await self.get_session()
@@ -683,7 +683,7 @@ class GitHubManager:
                         "success": True,
                         "issue_number": issue_number,
                         "assignees_removed": assignees,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                     }
                 else:
                     return {
@@ -723,7 +723,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}"
 
         if milestone.lower() in ("none", "null", "remove"):
             payload = {"milestone": None}
@@ -747,7 +747,7 @@ class GitHubManager:
                         "success": True,
                         "issue_number": issue_number,
                         "milestone": milestone if payload.get("milestone") else None,
-                        "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                        "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                     }
                 else:
                     return {
@@ -759,7 +759,7 @@ class GitHubManager:
             return {"success": False, "error": str(e)}
 
     async def _get_milestone_number(self, milestone_name: str) -> Optional[int]:
-        url = f"https://api.github.com/repos/{config.github_repo}/milestones"
+        url = f"https://api.github.com/repos/{config.github_repo()}/milestones"
 
         try:
             session = await self.get_session()
@@ -809,7 +809,7 @@ class GitHubManager:
         if not self._has_auth():
             return {"success": False, "error": "GitHub token not configured"}
 
-        url = f"https://api.github.com/repos/{config.github_repo}/issues/{issue_number}/lock"
+        url = f"https://api.github.com/repos/{config.github_repo()}/issues/{issue_number}/lock"
 
         try:
             session = await self.get_session()
@@ -832,7 +832,7 @@ class GitHubManager:
                             "issue_number": issue_number,
                             "locked": True,
                             "reason": reason,
-                            "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                            "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                         }
                     else:
                         return {
@@ -851,7 +851,7 @@ class GitHubManager:
                             "success": True,
                             "issue_number": issue_number,
                             "locked": False,
-                            "issue_url": f"https://github.com/{config.github_repo}/issues/{issue_number}",
+                            "issue_url": f"https://github.com/{config.github_repo()}/issues/{issue_number}",
                         }
                     else:
                         return {

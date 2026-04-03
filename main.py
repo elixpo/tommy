@@ -4,7 +4,7 @@ import sys
 import discord
 
 from src.logging_config import setup_logging
-from src.config import config
+from src import config
 from src.bot import bot
 
 

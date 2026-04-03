@@ -13,7 +13,7 @@ import aiohttp
 from typing import Optional
 from dataclasses import dataclass
 
-from ..config import config
+from .. import config
 from . import github_auth
 from .github_graphql import github_graphql
 
@@ -90,7 +90,7 @@ class GitHubPRManager:
 
     @property
     def repo(self) -> str:
-        return config.github_repo
+        return config.github_repo()
 
     @property
     def owner(self) -> str:
