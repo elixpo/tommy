@@ -15,15 +15,17 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from pathlib import Path
 
-# API Endpoints
-GITHUB_API_BASE = "https://api.github.com"
-POLLINATIONS_API_BASE = "https://gen.pollinations.ai/v1/chat/completions"
-POLLINATIONS_IMAGE_BASE = "https://gen.pollinations.ai/image"
+from ci_config import cfg, ai_api_base, ai_image_base, ai_model, image_style_suffix, image_size, character_ref_url, gists_branch, gists_dir, discord_char_limit, discord_chunk_size
 
-# Models - single source of truth for all social scripts
-MODEL = "gemini-large"  # Text generation model
-IMAGE_MODEL = "nanobanana-2"  # Image generation model
-WEBSEARCH_MODEL = "perplexity-reasoning"  # Web search model (used by Instagram)
+# API Endpoints — read from .github/tommy.yml
+GITHUB_API_BASE = "https://api.github.com"
+POLLINATIONS_API_BASE = ai_api_base()
+POLLINATIONS_IMAGE_BASE = ai_image_base()
+
+# Models — read from .github/tommy.yml
+MODEL = ai_model("text")
+IMAGE_MODEL = ai_model("image")
+WEBSEARCH_MODEL = ai_model("websearch")
 
 # Limits and retry settings
 MAX_SEED = 2147483647
@@ -32,29 +34,23 @@ INITIAL_RETRY_DELAY = 2
 DEFAULT_TIMEOUT = 30  # seconds for GitHub API / general requests
 LINKEDIN_MAX_CHARS = 1248
 
-# Repository constants
-OWNER = "pollinations"
-REPO = "pollinations"
-GISTS_BRANCH = "news"  # Unprotected branch for gist data (avoids main branch protection)
+# Repository constants — derived from REPO_FULL_NAME env var at runtime
+# Fallback to config values if env var is not set
+_repo_full = os.environ.get("REPO_FULL_NAME", "")
+if "/" in _repo_full:
+    OWNER, REPO = _repo_full.split("/", 1)
+else:
+    OWNER = ""
+    REPO = ""
+GISTS_BRANCH = gists_branch()
 
-# Image generation
-IMAGE_SIZE = 2048
-# Style suffix appended to every image prompt — ensures consistent pixel art style
-# regardless of what the text AI writes in image_prompt fields
-IMAGE_STYLE_SUFFIX = (
-    "Cozy pixel art, 8-bit aesthetic, large visible chunky pixels, "
-    "soft pastel gradients, warm ambient glow lighting, CRT glow effects. "
-    "Lime green #ecf874 used BOLDLY. "
-    "Tiny pixel sparkles and glowing particles floating in the air. Magical warm atmosphere. "
-    "Lo-fi retro gaming vibes like Stardew Valley or A Short Hike. "
-    "The attached image is a CHARACTER REFERENCE SHEET only — use it for character design, "
-    "proportions, and art style consistency. Do NOT copy the layout or background from it. "
-    "Only draw the characters mentioned in the prompt above, not all characters from the sheet."
-)
+# Image generation — read from .github/tommy.yml
+IMAGE_SIZE = image_size()
+IMAGE_STYLE_SUFFIX = image_style_suffix()
 
-# Discord-specific
-DISCORD_CHAR_LIMIT = 2000
-DISCORD_CHUNK_SIZE = 1900  # Leave room for safety
+# Discord-specific — read from .github/tommy.yml
+DISCORD_CHAR_LIMIT = discord_char_limit()
+DISCORD_CHUNK_SIZE = discord_chunk_size()
 
 # Get the directory where this script lives
 SCRIPTS_DIR = Path(__file__).parent
@@ -408,8 +404,10 @@ def generate_image(prompt: str, token: str, width: int = 2048, height: int = 204
             "nofeed": "true",
             "seed": seed,
             "key": token,
-            "image": "https://raw.githubusercontent.com/pollinations/pollinations/main/social/prompts/brand/characters-ref.jpg",
         }
+        _char_ref = character_ref_url()
+        if _char_ref:
+            params["image"] = _char_ref
 
         if attempt == 0:
             print(f"  Using seed: {seed}")
@@ -535,7 +533,7 @@ def get_file_sha(github_token: str, owner: str, repo: str, file_path: str, branc
 # ── Gist I/O helpers ─────────────────────────────────────────────────
 
 # Directory where gist JSONs live, relative to repo root
-GISTS_REL_DIR = "social/news/gists"
+GISTS_REL_DIR = gists_dir()
 
 # Required top-level keys for a valid gist
 _GIST_REQUIRED_KEYS = {"pr_number", "title", "author", "url", "merged_at"}
