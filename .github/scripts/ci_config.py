@@ -99,7 +99,8 @@ runtime_cfg: Dict = load_runtime_config()
 # ── Convenience accessors ───────────────────────────────────────────
 
 def bot_name() -> str:
-    return _deep_get(cfg, "bot", "name", default="Tommy")
+    """Read from config.json (single source of truth for bot identity)."""
+    return _deep_get(runtime_cfg, "bot", "name", default="Tommy")
 
 def trigger_phrase() -> str:
     return _deep_get(cfg, "bot", "trigger_phrase", default="tommy")
@@ -108,7 +109,8 @@ def system_prompt() -> str:
     return _deep_get(cfg, "bot", "system_prompt", default="")
 
 def whitelist() -> list:
-    return _deep_get(cfg, "github", "whitelist", default=[])
+    """Read from config.json → github.admin_users (single source of truth)."""
+    return _deep_get(runtime_cfg, "github", "admin_users", default=[])
 
 def secret_name(key: str) -> str:
     """Get a secret name, e.g. secret_name('app_id') -> 'TOMMY_BOT_APP_ID'."""
