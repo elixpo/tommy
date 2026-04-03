@@ -88,26 +88,46 @@ The `.env.example` file has detailed comments explaining how to get each key.
 
 ## Step 5 — Configure the Bot
 
-Open `config.json` and update these fields:
+Open `config.json` and fill in **every section**. The file ships empty — Tommy won't know which repo to work with until you tell it.
 
 ```jsonc
 {
   "bot": {
-    "name": "Tommy",                         // your bot's display name
-    "default_repo": "your-org/your-repo"     // the repo Tommy will work with
-  },
-  "github": {
-    "admin_users": ["your-github-username"],  // who can use admin commands
-    "whitelisted_repos": ["your-org/your-repo"]
+    "name": "Tommy",                          // display name (change if you want)
+    "default_repo": "your-org/your-repo"      // the GitHub repo Tommy manages
   },
   "discord": {
-    "admin_role_ids": []                      // Discord role IDs that count as admin
-                                              // (right-click a role → Copy ID)
+    "admin_role_ids": [123456789]             // Discord role IDs that count as admin
+                                              // (right-click a role → Copy Role ID)
+                                              // leave empty [] if everyone is admin
+  },
+  "github": {
+    "bot_username": "tommy-bot",              // your GitHub App's slug
+    "admin_users": ["your-github-username"],  // GitHub usernames with admin access
+    "whitelisted_repos": ["your-org/your-repo"],  // repos Tommy is allowed to touch
+    "admin_only_mentions": false              // true = only admins can @mention the bot
+  },
+  "ai": {
+    "model": "glm",                           // default AI model for the Discord bot
+    "fallback_model": ""                      // optional fallback if primary fails
+  },
+  "embeddings": {
+    "provider": "api",                        // "api" (remote) or "local" (on your machine)
+    "model": "text-embedding-3-small",        // embedding model name
+    "api_base_url": "https://api.openai.com/v1"  // embedding API endpoint
+  },
+  "features": {
+    "local_embeddings_enabled": false,        // set true to index your codebase
+    "embeddings_repo": "your-org/your-repo",  // repo to embed (usually same as default_repo)
+    "doc_embeddings_enabled": false,          // set true to index documentation sites
+    "doc_sites": []                           // URLs to crawl, e.g. ["https://docs.your-app.com"]
   }
 }
 ```
 
-Everything else has sensible defaults. See the comments in `config.json` for all options.
+Tommy uses [Pollinations AI](https://pollinations.ai) as the default LLM provider — it's free and requires no signup. The `POLLINATIONS_TOKEN` in your `.env` can be left blank to use the free tier. The default model `glm` works well out of the box.
+
+> **Tip**: To enable code search across your repo, set `features.local_embeddings_enabled` to `true` and `features.embeddings_repo` to your repo. You'll also need an `EMBEDDINGS_API_KEY` in `.env` if using the API embedding provider, or switch to `"provider": "local"` to run embeddings on your machine (no API key needed).
 
 ---
 
